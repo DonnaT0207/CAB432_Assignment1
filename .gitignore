@@ -1,0 +1,10 @@
+node_modules/
+npm-debug.log*
+data/
+*.db
+.env
+.DS_Store
+
+# sensitive/large files
+*.pem
+*.webm

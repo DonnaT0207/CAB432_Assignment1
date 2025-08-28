@@ -1,0 +1,483 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Video API Client</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <style>
+    /* ------------------------Theme tokens------------------------ */
+    :root{
+      --bg: #0f172a;            /* slate-900 */
+      --bg-grad-1: #0f172a;
+      --bg-grad-2: #111827;     /* gray-900 */
+      --card: rgba(255,255,255,0.06);
+      --card-border: rgba(255,255,255,0.12);
+      --text: #e5e7eb;          /* gray-200 */
+      --muted: #9ca3af;         /* gray-400 */
+      --primary: #60a5fa;       /* blue-400 */
+      --primary-600: #2563eb;   /* blue-600 */
+      --success: #22c55e;       /* green-500 */
+      --warning: #f59e0b;       /* amber-500 */
+      --danger:  #ef4444;       /* red-500 */
+      --pill-bg: rgba(255,255,255,0.08);
+      --shadow: 0 10px 30px rgba(0,0,0,0.35);
+      --ring: 0 0 0 3px rgba(96,165,250,0.35);
+      --radius: 14px;
+    }
+
+    /* Background gradient */
+    body{
+      margin:0; color:var(--text); font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial;
+      background: radial-gradient(1200px 800px at 10% -10%, #1f2937 0%, transparent 50%),
+                  radial-gradient(1000px 700px at 110% 10%, #0ea5e9 0%, transparent 60%),
+                  linear-gradient(180deg, var(--bg-grad-1), var(--bg-grad-2));
+      min-height: 100svh;
+    }
+
+    .container{ max-width: 1024px; margin: 32px auto; padding: 0 16px; }
+
+    h1{
+      font-weight: 800; letter-spacing: 0.3px; margin: 8px 0 22px;
+      font-size: clamp(26px, 3vw, 36px);
+    }
+
+    .grid{
+      display: grid; gap: 16px;
+    }
+    @media (min-width: 900px){
+      .grid-2{ grid-template-columns: 1fr 1fr; }
+    }
+
+    .card{
+      background: var(--card);
+      border: 1px solid var(--card-border);
+      border-radius: var(--radius);
+      padding: 18px 18px 16px;
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(6px);
+      transition: transform .15s ease, border-color .2s ease;
+    }
+    .card:hover{ transform: translateY(-1px); border-color: rgba(255,255,255,0.2); }
+    .card h2{ margin: 0 0 12px; font-size: 18px; letter-spacing: .2px; }
+    .subtle{ color: var(--muted); font-size: 14px; }
+
+    /* Buttons */
+    .btn{
+      appearance: none; border: 1px solid transparent; border-radius: 10px;
+      padding: 8px 12px; font-weight: 600; letter-spacing:.2px;
+      transition: transform .05s ease, background .15s ease, border-color .15s ease, color .15s ease;
+      cursor: pointer; user-select: none;
+    }
+    .btn:active{ transform: translateY(1px) scale(.99); }
+    .btn[disabled]{ opacity: .5; cursor: not-allowed; }
+
+    .btn.primary{
+      background: linear-gradient(180deg, var(--primary), var(--primary-600));
+      color: #fff; box-shadow: 0 6px 18px rgba(37,99,235,.35);
+    }
+    .btn.secondary{
+      background: transparent; color: var(--text);
+      border-color: rgba(255,255,255,0.2);
+    }
+    .btn.ghost{
+      background: transparent; color: var(--muted);
+    }
+    .btn.success{ background: linear-gradient(180deg, #34d399, #10b981); color: #052e1f; }
+    .btn.danger{ background: linear-gradient(180deg, #fda4af, #ef4444); color: #3b0a0a; }
+
+    .row{ display:flex; flex-wrap: wrap; align-items:center; gap: 8px; }
+    input[type="text"], input[type="password"]{
+      background: rgba(255,255,255,0.06); color: var(--text);
+      border: 1px solid rgba(255,255,255,0.18); outline: none;
+      padding: 8px 10px; border-radius: 10px; min-width: 160px;
+    }
+    input:focus{ box-shadow: var(--ring); border-color: rgba(96,165,250,.5); }
+
+    input[type="file"]{
+      color: var(--muted);
+    }
+
+    code{ background: rgba(255,255,255,0.08); padding:2px 6px; border-radius: 6px; }
+    .muted{ color: var(--muted); }
+
+    .list{ display: grid; gap: 10px; }
+    .item{
+      border: 1px dashed rgba(255,255,255,0.18);
+      border-radius: 12px; padding: 12px;
+      display:grid; gap: 8px;
+      background: rgba(255,255,255,0.035);
+    }
+    .item-head{ display:flex; justify-content:space-between; align-items:center; gap:10px; }
+    .item-title{ font-weight: 700; }
+
+    .actions{ display:flex; gap:8px; flex-wrap: wrap; }
+
+    /* Status pill */
+    .pill{
+      display:inline-flex; align-items:center; gap:6px;
+      border-radius: 999px; padding: 4px 10px; font-weight: 700; font-size: 12px;
+      background: var(--pill-bg); border: 1px solid rgba(255,255,255,0.16);
+    }
+    .pill.success{ color:#22c55e; }
+    .pill.warn{ color:#f59e0b; }
+    .pill.danger{ color:#ef4444; }
+
+    /* Spinner (for running) */
+    .spinner{
+      width:12px; height:12px; border-radius:999px;
+      border: 2px solid rgba(255,255,255,.2);
+      border-top-color: var(--primary);
+      animation: spin .8s linear infinite;
+    }
+    @keyframes spin{ to{ transform: rotate(360deg); } }
+
+    /* Badges / small */
+    .small{ font-size: 12px; }
+    .sep{ opacity:.35; margin:0 6px; }
+    .empty{ font-style: italic; color: var(--muted); padding: 6px 2px; }
+
+    /* Toasts */
+    .toasts{
+      position: fixed; right: 18px; bottom: 18px; display:grid; gap:10px; z-index: 50;
+    }
+    .toast{
+      background: rgba(17,24,39,0.9); color: #e5e7eb;
+      border:1px solid rgba(255,255,255,0.15); border-radius:12px; padding:10px 12px;
+      box-shadow: var(--shadow); min-width: 220px;
+      animation: pop .15s ease-out;
+    }
+    .toast.success{ border-color: rgba(16,185,129,.45); }
+    .toast.error{ border-color: rgba(239,68,68,.45); }
+    @keyframes pop{ from{ transform: translateY(6px); opacity: 0; } to{ transform:none; opacity: 1; } }
+
+    /* Section header actions align to right on wide screens */
+    .section-head{ display:flex; align-items:center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Video API Client</h1>
+
+    <div class="grid grid-2">
+      <!-- 1) Login -->
+      <section class="card">
+        <div class="section-head">
+          <h2>1) Login</h2>
+          <span class="small muted">JWT auth demo</span>
+        </div>
+        <div class="row">
+          <label class="small">Username</label>
+          <input id="u" type="text" value="admin">
+          <label class="small">Password</label>
+          <input id="p" type="password" value="admin123">
+          <button id="btnLogin" class="btn primary">Login</button>
+          <button id="btnLogout" class="btn secondary" disabled>Logout</button>
+        </div>
+        <div class="row small">
+          <span>Status:</span>
+          <span id="authState" class="pill warn"><span class="spinner" style="display:none"></span> Not logged in</span>
+        </div>
+        <div class="small muted">Token: <code id="tok">-</code></div>
+      </section>
+
+      <!-- 2) Upload -->
+      <section class="card">
+        <div class="section-head">
+          <h2>2) Upload</h2>
+          <span class="small muted">Send a video to process</span>
+        </div>
+        <div class="row">
+          <input id="file" type="file" accept="video/*" disabled />
+          <button id="btnUpload" class="btn primary" disabled>Upload</button>
+        </div>
+        <pre id="upRes" class="subtle" style="white-space:pre-wrap;"></pre>
+      </section>
+    </div>
+
+    <!-- 3) Files -->
+    <section class="card">
+      <div class="section-head">
+        <h2>3) Your files</h2>
+        <div class="actions">
+          <button id="btnList" class="btn secondary" disabled>Refresh files</button>
+        </div>
+      </div>
+      <div id="files" class="list"></div>
+    </section>
+
+    <!-- 4) Jobs -->
+    <section class="card">
+      <div class="section-head">
+        <h2>4) Jobs</h2>
+        <div class="actions">
+          <button id="btnJobs" class="btn secondary" disabled>Refresh jobs</button>
+          <label class="small muted" style="display:flex;align-items:center;gap:6px;">
+            <input type="checkbox" id="autoJobs" checked disabled>
+            Auto refresh every 5s
+          </label>
+        </div>
+      </div>
+      <div id="jobs" class="list"></div>
+    </section>
+  </div>
+
+  <div class="toasts" id="toasts"></div>
+
+<script>
+// Configuration & State
+const BASE = location.origin;
+let token = null;
+let jobsInterval = null;
+
+// Toasts
+function toast(msg, type="success", timeout=2500){
+  const wrap = document.getElementById('toasts');
+  const el = document.createElement('div');
+  el.className = `toast ${type}`;
+  el.textContent = msg;
+  wrap.appendChild(el);
+  setTimeout(()=>el.remove(), timeout);
+}
+
+// UI helpers
+function setAuthPill(text, kind){
+  const pill = document.getElementById('authState');
+  pill.className = `pill ${kind}`;
+  pill.innerHTML = `${kind==='warn'?'<span class="spinner"></span> ':''}${text}`;
+}
+
+function toggleUI(loggedIn){
+  document.getElementById('file').disabled     = !loggedIn;
+  document.getElementById('btnUpload').disabled= !loggedIn;
+  document.getElementById('btnList').disabled  = !loggedIn;
+  document.getElementById('btnJobs').disabled  = !loggedIn;
+  document.getElementById('btnLogout').disabled= !loggedIn;
+  document.getElementById('btnLogin').disabled = loggedIn;
+  document.getElementById('autoJobs').disabled = !loggedIn;
+
+  document.getElementById('tok').textContent = loggedIn ? (token.slice(0,24)+'...') : '-';
+  if (!loggedIn) {
+    setAuthPill('Not logged in', 'warn');
+    document.getElementById('files').innerHTML = '';
+    document.getElementById('jobs').innerHTML  = '';
+    clearJobsAuto();
+  } else {
+    setAuthPill('Logged in', 'success');
+    listFiles();
+    listJobs();
+    setupJobsAuto();
+  }
+}
+toggleUI(false);
+
+function authHeaders() {
+  return token ? { Authorization: 'Bearer ' + token } : {};
+}
+async function guardFetch(url, opts = {}) {
+  const headers = { ...(opts.headers || {}), ...authHeaders() };
+  const r = await fetch(url, { ...opts, headers });
+  if (r.status === 401) { doLogout(true); throw new Error('Unauthorized'); }
+  return r;
+}
+
+function doLogout(silent=false){
+  token = null; toggleUI(false);
+  if (!silent) toast('Logged out','success');
+}
+
+function setupJobsAuto(){
+  clearJobsAuto();
+  const chk = document.getElementById('autoJobs');
+  if (chk.checked) jobsInterval = setInterval(() => { if (token) listJobs(); }, 5000);
+}
+function clearJobsAuto(){ if (jobsInterval) clearInterval(jobsInterval); jobsInterval=null; }
+
+// Auth
+document.getElementById('btnLogin').onclick = async () => {
+  const r = await fetch(BASE + '/login', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      username: document.getElementById('u').value,
+      password: document.getElementById('p').value
+    })
+  });
+  let j; try { j = await r.json(); } catch { return toast('Login response is not JSON','error'); }
+  if (j.ok) { token = j.token; toggleUI(true); toast('Login successful'); }
+  else { toast('Login failed','error'); }
+};
+document.getElementById('btnLogout').onclick = () => doLogout(false);
+document.getElementById('autoJobs').onchange = () => setupJobsAuto();
+
+// Upload
+
+document.getElementById('btnUpload').onclick = async () => {
+  const f = document.getElementById('file').files[0];
+  if (!f) return toast('Choose a video file first','error');
+  const fd = new FormData(); fd.append('video', f);
+  const r = await guardFetch(BASE + '/upload', { method: 'POST', body: fd });
+  let j; try { j = await r.json(); } catch { return toast('Upload response is not JSON','error'); }
+  document.getElementById('upRes').textContent = JSON.stringify(j, null, 2);
+  if (j.ok) { toast('Upload successful'); await listFiles(); }
+  else toast('Upload failed: '+(j.error||'unknown'), 'error');
+};
+
+// Files
+document.getElementById('btnList').onclick = () => listFiles();
+
+async function listFiles(){
+  const r = await guardFetch(BASE + '/files?page=1&size=50');
+  let j; try { j = await r.json(); } catch { return toast('Files response is not JSON','error'); }
+  const box = document.getElementById('files'); box.innerHTML = '';
+  const items = j.ok && Array.isArray(j.items) ? j.items : [];
+  if (!items.length) { box.innerHTML = `<div class="empty">No files yet. Upload a video to begin.</div>`; return; }
+
+  items.forEach(it => {
+    const el = document.createElement('div');
+    el.className = 'item';
+    el.innerHTML = `
+      <div class="item-head">
+        <div class="item-title">${escapeHtml(it.filename)}</div>
+        <div class="actions">
+          <button class="btn primary btnTrans" data-id="${it.id}">Transcode 720p</button>
+          <button class="btn secondary btnDownOrig" data-id="${it.id}">Download original</button>
+        </div>
+      </div>
+      <div class="small muted">
+        id: <code>${escapeHtml(it.id)}</code>
+        <span class="sep">•</span> ${Number(it.size)} bytes
+        <span class="sep">•</span> uploaded: ${escapeHtml(it.uploaded_at)}
+      </div>
+    `;
+    box.appendChild(el);
+  });
+
+  box.querySelectorAll('.btnTrans').forEach(b => { b.onclick = () => transcode(b.dataset.id); });
+  box.querySelectorAll('.btnDownOrig').forEach(b => {
+    b.onclick = async (e) => {
+      e.preventDefault();
+      const r = await guardFetch(BASE + '/download/original/' + encodeURIComponent(b.dataset.id));
+      const blob = await r.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a'); a.href = url; a.download = ''; a.click();
+      URL.revokeObjectURL(url);
+      toast('Original downloaded');
+    };
+  });
+}
+
+// Jobs
+
+document.getElementById('btnJobs').onclick = () => listJobs();
+
+async function transcode(fileId){
+  const r = await guardFetch(BASE + '/transcode/' + encodeURIComponent(fileId), {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ preset:'slow', crf:22, threads:1, scale:'1280:720' })
+  });
+  let j; try { j = await r.json(); } catch { return toast('Transcode response is not JSON','error'); }
+  if (!j.ok) return toast('Transcode failed: ' + (j.error || 'unknown'), 'error');
+  toast('Transcode started');
+  addJobRow({ id: j.jobId, status: 'running', created_at: new Date().toISOString(), updated_at: new Date().toISOString(), file_id: fileId, output_filename: null }, true);
+  listJobs();
+}
+
+async function listJobs(){
+  const r = await guardFetch(BASE + '/jobs?page=1&size=50');
+  let j; try { j = await r.json(); } catch { return toast('Jobs response is not JSON','error'); }
+  const box = document.getElementById('jobs'); box.innerHTML = '';
+  const items = j.ok && Array.isArray(j.items) ? j.items : [];
+  if (!items.length) { box.innerHTML = `<div class="empty">No jobs yet. Start a transcode from your files.</div>`; return; }
+  items.forEach(job => addJobRow(job, false));
+}
+
+function addJobRow(job, watchNow){
+  const box = document.getElementById('jobs');
+  const row = document.createElement('div');
+  row.className = 'item';
+  row.id = 'job-' + job.id;
+
+  row.innerHTML = `
+    <div class="item-head">
+      <div class="item-title">Job <code>${escapeHtml(job.id)}</code></div>
+      <div class="actions">
+        <span class="pill ${job.status==='succeeded'?'success':job.status==='failed'?'danger':'warn'}">
+          ${job.status==='running'?'<span class="spinner"></span>':''}
+          ${escapeHtml(job.status)}
+        </span>
+        <button class="btn ghost btnWatch">Watch</button>
+        ${job.status === 'succeeded' ? `<button class="btn success btnDownTc">Download output</button>` : ``}
+      </div>
+    </div>
+    <div class="small muted">
+      file: <code>${escapeHtml(job.file_id || '-')}</code>
+      <span class="sep">•</span> created: ${escapeHtml(job.created_at || '-')}
+      <span class="sep">•</span> updated: ${escapeHtml(job.updated_at || '-')}
+    </div>
+  `;
+  box.appendChild(row);
+
+  row.querySelector('.btnWatch').onclick = () => watchJob(job.id);
+  const dl = row.querySelector('.btnDownTc');
+  if (dl) dl.onclick = (e) => downloadTranscoded(e, job.id);
+
+  if (watchNow) watchJob(job.id);
+}
+
+async function watchJob(jobId){
+  const row = document.getElementById('job-' + jobId);
+  if (!row) return;
+  const pill = row.querySelector('.pill');
+  const meta = row.querySelector('.muted');
+
+  const iv = setInterval(async () => {
+    try{
+      const r = await guardFetch(BASE + '/jobs/' + encodeURIComponent(jobId));
+      const j = await r.json();
+      if (!j.ok){ clearInterval(iv); pill.textContent = 'error'; pill.className = 'pill danger'; return; }
+      const st = j.job.status;
+      pill.className = `pill ${st==='succeeded'?'success':st==='failed'?'danger':'warn'}`;
+      pill.innerHTML = `${st==='running'?'<span class="spinner"></span>':''}${st}`;
+      meta.innerHTML = `file: <code>${escapeHtml(j.job.file_id || '-')}</code> <span class="sep">•</span> created: ${escapeHtml(j.job.created_at || '-')} <span class="sep">•</span> updated: ${escapeHtml(j.job.updated_at || '-')}`;
+
+      if (st === 'succeeded'){
+        clearInterval(iv);
+        if (!row.querySelector('.btnDownTc')){
+          const btn = document.createElement('button');
+          btn.className = 'btn success btnDownTc';
+          btn.textContent = 'Download output';
+          btn.onclick = (e)=>downloadTranscoded(e, jobId);
+          row.querySelector('.actions').appendChild(btn);
+          toast('Transcode finished');
+        }
+      }
+      if (st === 'failed'){ clearInterval(iv); toast('Transcode failed','error'); }
+    }catch{ clearInterval(iv); }
+  }, 2000);
+}
+
+async function downloadTranscoded(e, jobId){
+  e.preventDefault();
+  const r = await guardFetch(BASE + '/download/transcoded/' + encodeURIComponent(jobId));
+  const blob = await r.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a'); a.href = url; a.download = ''; a.click();
+  URL.revokeObjectURL(url);
+  toast('Output downloaded');
+}
+
+// Utilities
+
+function escapeHtml(s){
+  if (s == null) return '';
+  return String(s)
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
+}
+</script>
+</body>
+</html>
