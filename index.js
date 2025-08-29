@@ -278,6 +278,6 @@ app.post("/transcode/:fileId", auth, (req, res) => {
 });
 
 // --- start ---
-app.listen(PORT, "0.0.0.0", () => {
-  console.log(`API listening on http://0.0.0.0:${PORT}`);
+app.listen(PORT, () => {
+  console.log(`API listening on ${PORT}`);
 });
