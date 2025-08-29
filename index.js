@@ -75,7 +75,7 @@ ensureSchema();
 // --- users (hardcoded) ---
 const USERS = {
   admin: { password: "admin123", role: "admin" },
-  user:  { password: "alice123",  role: "alice"  }, 
+  user:  { password: "alice123",  role: "alice"  },
 };
 
 // --- auth middleware ---
@@ -88,17 +88,8 @@ function auth(req, res, next) {
 }
 
 // --- routes ---
-app.get("/", (req, res) => {
-  res.json({
-    ok: true,
-    msg: "Video API is up",
-    env: {
-      DEFAULT_PRESET: process.env.DEFAULT_PRESET || "medium",
-      DEFAULT_CRF: Number(process.env.DEFAULT_CRF ?? 28),
-      DEFAULT_THREADS: Number(process.env.DEFAULT_THREADS ?? 1),
-      DEFAULT_SCALE: process.env.DEFAULT_SCALE ?? null
-    }
-  });
+app.get("/", (_req, res) => {
+  res.json({ ok: true, msg: "Video API is up" });
 });
 
 app.post("/login", (req, res) => {
@@ -173,7 +164,7 @@ app.get("/jobs/:jobId", auth, (req, res) => {
   res.json({ ok: true, job: { ...j, params: JSON.parse(j.params) } });
 });
 
-// job logs (in-memory)
+// job logs
 const jobLogs = new Map(); // jobId => lines[]
 app.get("/jobs/:jobId/logs", auth, (req, res) => {
   const j = db.prepare("SELECT id FROM jobs WHERE id=? AND owner=?").get(req.params.jobId, req.user.sub);
@@ -193,27 +184,50 @@ app.get("/download/transcoded/:jobId", auth, (req, res) => {
   res.download(path.join(OUT_DIR, j.output_filename));
 });
 
-// transcode (robust, with logs/progress)
+// helper: select codecs/options per format
+function codecsFor(format) {
+  if (format === "webm") {
+    return {
+      v: "libvpx-vp9",
+      a: "libopus",
+      extra: ["-b:v", "0"] 
+    };
+  }
+  // mp4/mov/mkv/avi
+  return {
+    v: "libx264",
+    a: "aac",
+    extra: []
+  };
+}
+
+// transcode 
 app.post("/transcode/:fileId", auth, (req, res) => {
   const f = db.prepare("SELECT * FROM files WHERE id=? AND owner=?").get(req.params.fileId, req.user.sub);
   if (!f) return res.status(404).json({ ok: false, error: "file not found" });
 
+  const allowed = ["mp4", "mkv", "mov", "avi", "webm"];
   const {
     preset  = process.env.DEFAULT_PRESET  || "medium",
     crf     = Number(process.env.DEFAULT_CRF ?? 28),
     threads = Number(process.env.DEFAULT_THREADS ?? 1),
-    scale   = process.env.DEFAULT_SCALE   || null
+    scale   = process.env.DEFAULT_SCALE   || null,
+    format  = (req.body && req.body.format) ? String(req.body.format).toLowerCase() : "mp4"
   } = req.body || {};
 
+  if (!allowed.includes(format)) {
+    return res.status(400).json({ ok: false, error: `unsupported format. allowed: ${allowed.join(", ")}` });
+  }
+
   const jobId   = uuidv4();
-  const outName = `${jobId}.mp4`;
+  const outName = `${jobId}.${format}`;
   const inputPath  = path.join(UP_DIR, f.filename);
   const outputPath = path.join(OUT_DIR, outName);
 
   db.prepare(
     `INSERT INTO jobs (id, owner, file_id, status, params, created_at, updated_at)
      VALUES (?, ?, ?, 'running', ?, datetime('now'), datetime('now'))`
-  ).run(jobId, req.user.sub, f.id, JSON.stringify({ preset, crf, threads, scale }));
+  ).run(jobId, req.user.sub, f.id, JSON.stringify({ preset, crf, threads, scale, format }));
 
   jobLogs.set(jobId, []);
   const pushLog = (line) => {
@@ -223,22 +237,26 @@ app.post("/transcode/:fileId", auth, (req, res) => {
     jobLogs.set(jobId, arr);
   };
 
-  log("TRANSCODE: start", { jobId, fileId: f.id, preset, crf, threads, scale });
+  log("TRANSCODE: start", { jobId, fileId: f.id, preset, crf, threads, scale, format });
   pushLog(`start: ${new Date().toISOString()}`);
   pushLog(`input: ${inputPath}`);
   pushLog(`output: ${outputPath}`);
 
+  const co = codecsFor(format);
+  const common = [
+    "-preset", String(preset),
+    "-crf",    String(crf),
+    "-threads",String(threads),
+    "-y"
+  ];
+
+  if (format === "mp4" || format === "mov") common.push("-movflags", "faststart");
+
   const cmd = ffmpeg(inputPath)
-    .format("mp4")
-    .videoCodec("libx264")
-    .audioCodec("aac")
-    .outputOptions([
-      "-preset", String(preset),
-      "-crf",    String(crf),
-      "-threads",String(threads),
-      "-movflags","faststart",
-      "-y"
-    ])
+    .format(format)
+    .videoCodec(co.v)
+    .audioCodec(co.a)
+    .outputOptions([...common, ...co.extra])
     .on("start", (cmdline) => {
       pushLog(`ffmpeg cmd: ${cmdline}`);
       db.prepare("UPDATE jobs SET updated_at=datetime('now') WHERE id=?").run(jobId);
