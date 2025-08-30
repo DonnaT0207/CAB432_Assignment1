@@ -18,7 +18,7 @@ const JWT_SECRET = process.env.JWT_SECRET || "dev-secret-change-me";
 
 app.use(cors());
 app.use(express.json());
-app.use("/app", express.static("public")); // web client
+app.use("/", express.static("public")); // web client
 
 // ---------- FFmpeg ----------
 ffmpeg.setFfmpegPath(ffmpegInstaller.path);
