@@ -169,6 +169,17 @@ app.post("/accounts/topup",auth,(req,res)=>{
   res.json({ok:true,added:amount});
 });
 
+// ---------- helpers ----------
+function listParams(req,opt){
+  const page=Math.max(1,parseInt(req.query.page||"1",10));
+  const size=Math.min(100,Math.max(1,parseInt(req.query.size||"10",10)));
+  const q=(req.query.q||"").trim();
+  const sort=opt.sortWhitelist.includes(req.query.sort)?req.query.sort:opt.defaultSort;
+  const order=(req.query.order||"desc").toLowerCase()==="asc"?"asc":"desc";
+  const offset=(page-1)*size;
+  return {page,size,offset,q,sort,order};
+}
+
 // ---------- files ----------
 const upload = multer({ dest: os.tmpdir() });
 
@@ -199,16 +210,6 @@ app.post("/upload",auth,upload.single("file"),(req,res)=>{
   }
 });
 
-function listParams(req,opt){
-  const page=Math.max(1,parseInt(req.query.page||"1",10));
-  const size=Math.min(100,Math.max(1,parseInt(req.query.size||"10",10)));
-  const q=(req.query.q||"").trim();
-  const sort=opt.sortWhitelist.includes(req.query.sort)?req.query.sort:opt.defaultSort;
-  const order=(req.query.order||"desc").toLowerCase()==="asc"?"asc":"desc";
-  const offset=(page-1)*size;
-  return {page,size,offset,q,sort,order};
-}
-
 app.get("/files",auth,(req,res)=>{
   const {page,size,offset,q,sort,order}=listParams(req,{
     sortWhitelist:["uploaded_at","size_bytes","filename"],
@@ -224,7 +225,7 @@ app.get("/files",auth,(req,res)=>{
   res.set("X-Total-Count",String(total));
   res.set("X-Page",String(page));
   res.set("X-Page-Size",String(size));
-  res.json({items:rows,total,page,size});
+  res.json({ items:rows, total, page, size, sort, order, q });
 });
 
 app.delete("/files/:id",auth,(req,res)=>{
@@ -236,7 +237,6 @@ app.delete("/files/:id",auth,(req,res)=>{
   res.json({ok:true});
 });
 
-// download original by fileId (auth)
 app.get("/download/original/:fileId",auth,(req,res)=>{
   const row=db.prepare(`SELECT stored_path,filename FROM files WHERE id=? AND owner=?`).get(req.params.fileId,req.user.sub);
   if(!row || !fs.existsSync(row.stored_path)) return res.sendStatus(404);
@@ -266,22 +266,27 @@ app.get("/jobs",auth,(req,res)=>{
     sortWhitelist:["created_at","updated_at","status"],
     defaultSort:"updated_at"
   });
-  const where=["owner=?"]; const params=[req.user.sub];
-  if(q){
-    const s=q.toLowerCase();
-    if(["queued","running","completed","failed"].includes(s)){ where.push("LOWER(status)=?"); params.push(s); }
-    else { where.push("id LIKE ?"); params.push(`%${q}%`); }
+  const status = (req.query.status||"").toLowerCase(); // queued/running/completed/failed
+  const where = ["owner=?"]; const params=[req.user.sub];
+
+  if(status && ["queued","running","completed","failed"].includes(status)){
+    where.push("LOWER(status)=?"); params.push(status);
   }
-  const whereSql=`WHERE ${where.join(" AND ")}`;
-  const total=db.prepare(`SELECT COUNT(*) c FROM jobs ${whereSql}`).get(...params).c;
-  const rows=db.prepare(
+  if(q){
+    where.push("id LIKE ?"); params.push(`%${q}%`);
+  }
+
+  const whereSql = `WHERE ${where.join(" AND ")}`;
+  const total = db.prepare(`SELECT COUNT(*) c FROM jobs ${whereSql}`).get(...params).c;
+  const rows = db.prepare(
     `SELECT id,file_id,status,progress,charged_cents,refunded_cents,created_at,updated_at
      FROM jobs ${whereSql} ORDER BY ${sort} ${order} LIMIT ? OFFSET ?`
   ).all(...params,size,offset);
+
   res.set("X-Total-Count",String(total));
   res.set("X-Page",String(page));
   res.set("X-Page-Size",String(size));
-  res.json({items:rows,total,page,size});
+  res.json({ items:rows, total, page, size, sort, order, status, q });
 });
 
 app.get("/jobs/:id",auth,(req,res)=>{
@@ -300,7 +305,6 @@ app.get("/jobs/:id/logs",auth,(req,res)=>{
   res.send(row.log||"");
 });
 
-// only downloadable when completed
 app.get("/download/transcoded/:jobId",auth,(req,res)=>{
   const j=db.prepare(`SELECT owner,status,output_path,output_name FROM jobs WHERE id=?`).get(req.params.jobId);
   if(!j || j.owner!==req.user.sub) return res.sendStatus(404);
@@ -310,7 +314,6 @@ app.get("/download/transcoded/:jobId",auth,(req,res)=>{
   res.sendFile(j.output_path);
 });
 
-// start transcode (cost 50c), worker updates status in-place
 app.post("/transcode/:fileId",auth,async (req,res)=>{
   const f=db.prepare(`SELECT id,stored_path,filename FROM files WHERE id=? AND owner=?`).get(req.params.fileId,req.user.sub);
   if(!f) return res.sendStatus(404);
@@ -322,9 +325,8 @@ app.post("/transcode/:fileId",auth,async (req,res)=>{
   const costCents=50;
 
   let jobId;
-  try{
-    jobId = createJobWithCharge(req.user.sub,f.id,costCents,{format,crf,preset,scale});
-  }catch(e){
+  try{ jobId = createJobWithCharge(req.user.sub,f.id,costCents,{format,crf,preset,scale}); }
+  catch(e){
     if(e.message==="INSUFFICIENT_FUNDS") return res.status(402).json({ok:false,error:"insufficient funds"});
     return res.status(500).json({ok:false,error:e.message});
   }
@@ -381,7 +383,7 @@ app.post("/transcode/:fileId",auth,async (req,res)=>{
   }
 });
 
-// optional: list outputs (not used by UI for gating)
+// optional
 app.get("/outputs",auth,(_req,res)=>{
   const items=fs.readdirSync(OUT_DIR).filter(f=>!f.startsWith("."));
   res.json({items});
