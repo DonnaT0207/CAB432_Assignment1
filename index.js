@@ -1,9 +1,7 @@
-// index.js — Video API (users: admin/admin123, user/user123)
 import express from "express";
 import cors from "cors";
 import jwt from "jsonwebtoken";
 import multer from "multer";
-import Database from "better-sqlite3";
 import { v4 as uuidv4 } from "uuid";
 import ffmpeg from "fluent-ffmpeg";
 import ffmpegInstaller from "@ffmpeg-installer/ffmpeg";
@@ -11,8 +9,9 @@ import fs from "fs";
 import path from "path";
 
 const log = (...args) => console.log(new Date().toISOString(), ...args);
+const nowIso = () => new Date().toISOString();
 
-// --- app ---
+// ---------- App ----------
 const app = express();
 const PORT = process.env.PORT || 8080;
 const JWT_SECRET = process.env.JWT_SECRET || "dev-secret-change-me";
@@ -21,30 +20,88 @@ app.use(cors());
 app.use(express.json());
 app.use("/app", express.static("public")); // web client
 
-// --- ffmpeg ---
+// ---------- FFmpeg ----------
 ffmpeg.setFfmpegPath(ffmpegInstaller.path);
 
-// --- data dirs ---
+// ---------- Data directories ----------
 const DATA_DIR = path.join(process.cwd(), "data");
 const UP_DIR = path.join(DATA_DIR, "uploads");
 const OUT_DIR = path.join(DATA_DIR, "outputs");
-for (const d of [DATA_DIR, UP_DIR, OUT_DIR]) if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true });
+for (const d of [DATA_DIR, UP_DIR, OUT_DIR]) {
+  if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true });
+}
 
-// --- db + schema guard ---
-const db = new Database(path.join(DATA_DIR, "app.db"));
-function ensureSchema() {
+// ---------- Database (RDS first, SQLite fallback) ----------
+let dbType = "sqlite";
+let pool = null;      // mysql2/promise pool (for MySQL/RDS)
+let sqliteDb = null;  // better-sqlite3 instance (for local fallback)
+
+await initDb();
+
+// Try to use MySQL (RDS). If env vars are missing, fall back to SQLite.
+async function initDb() {
+  if (process.env.RDS_HOST) {
+    const mysql = await import("mysql2/promise");
+    pool = mysql.createPool({
+      host: process.env.RDS_HOST,
+      user: process.env.RDS_USER,
+      password: process.env.RDS_PASSWORD,
+      database: process.env.RDS_DB,
+      waitForConnections: true,
+      connectionLimit: 10,
+      queueLimit: 0,
+    });
+    dbType = "mysql";
+    log("DB: Using MySQL (RDS)");
+    await ensureSchemaMySQL();
+  } else {
+    const Database = (await import("better-sqlite3")).default;
+    sqliteDb = new Database(path.join(DATA_DIR, "app.db"));
+    sqliteDb.pragma("journal_mode = WAL"); // durability for SQLite
+    dbType = "sqlite";
+    log("DB: Using SQLite (WAL) fallback");
+    ensureSchemaSQLite();
+  }
+}
+
+// Create tables for MySQL (RDS)
+async function ensureSchemaMySQL() {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS files (
+      id VARCHAR(36) PRIMARY KEY,
+      owner VARCHAR(255) NOT NULL,
+      filename VARCHAR(255) NOT NULL,
+      size BIGINT NOT NULL,
+      uploaded_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS jobs (
+      id VARCHAR(36) PRIMARY KEY,
+      owner VARCHAR(255) NOT NULL,
+      file_id VARCHAR(36) NOT NULL,
+      status VARCHAR(20) NOT NULL,
+      params TEXT NOT NULL,
+      created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      output_filename VARCHAR(255)
+    )
+  `);
+}
+
+// Create/guard tables for SQLite (schema matches your original)
+function ensureSchemaSQLite() {
   const wantFiles = ["id", "owner", "filename", "size", "uploaded_at"];
   const wantJobs  = ["id", "owner", "file_id", "status", "params", "created_at", "updated_at", "output_filename"];
-  const cols = (t) => db.prepare(`PRAGMA table_info(${t});`).all().map(r => r.name);
-  const hasSame = (got, want) => got.length && want.every(c => got.includes(c)) && got.length === want.length;
-
+  const cols = (t) => sqliteDb.prepare(`PRAGMA table_info(${t});`).all().map(r => r.name);
   let filesCols = []; let jobsCols = [];
   try { filesCols = cols("files"); } catch {}
   try { jobsCols  = cols("jobs"); }  catch {}
+  const same = (got, want) => got.length && want.every(c => got.includes(c)) && got.length === want.length;
 
-  if (!hasSame(filesCols, wantFiles) || !hasSame(jobsCols, wantJobs)) {
+  if (!same(filesCols, wantFiles) || !same(jobsCols, wantJobs)) {
     log("SCHEMA: mismatch -> recreate tables", { filesCols, jobsCols });
-    db.exec(`
+    sqliteDb.exec(`
       DROP TABLE IF EXISTS files;
       DROP TABLE IF EXISTS jobs;
       PRAGMA journal_mode = WAL;
@@ -66,19 +123,16 @@ function ensureSchema() {
         output_filename TEXT
       );
     `);
-  } else {
-    db.exec(`PRAGMA journal_mode = WAL;`);
   }
 }
-ensureSchema();
 
-// --- users (hardcoded) ---
+// ---------- Users (hard-coded, same as your latest) ----------
 const USERS = {
   admin: { password: "admin123", role: "admin" },
-  user:  { password: "alice123",  role: "alice"  },
+  user:  { password: "alice123", role: "alice" },
 };
 
-// --- auth middleware ---
+// ---------- Auth middleware ----------
 function auth(req, res, next) {
   const h = req.headers.authorization || "";
   const m = h.match(/^Bearer (.+)$/);
@@ -87,7 +141,7 @@ function auth(req, res, next) {
   catch { return res.status(401).json({ ok: false, error: "invalid token" }); }
 }
 
-// --- routes ---
+// ---------- Routes ----------
 app.get("/", (_req, res) => {
   res.json({ ok: true, msg: "Video API is up" });
 });
@@ -100,110 +154,173 @@ app.post("/login", (req, res) => {
   res.json({ ok: true, token, user: { username, role: u.role } });
 });
 
-// upload
+// ---------- Upload (stores file metadata into DB) ----------
 const upload = multer({ dest: UP_DIR });
-app.post("/upload", auth, upload.single("video"), (req, res) => {
+app.post("/upload", auth, upload.single("video"), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ ok: false, error: "no file" });
     const fileId = uuidv4();
     const ext = path.extname(req.file.originalname || ".mp4") || ".mp4";
     const finalName = `${fileId}${ext}`;
     fs.renameSync(req.file.path, path.join(UP_DIR, finalName));
-    db.prepare("INSERT INTO files (id, owner, filename, size, uploaded_at) VALUES (?, ?, ?, ?, datetime('now'))")
-      .run(fileId, req.user.sub, finalName, req.file.size);
-    const total = db.prepare("SELECT COUNT(*) AS c FROM files WHERE owner=?").get(req.user.sub).c;
-    log("UPLOAD: ok", { owner: req.user.sub, fileId, size: req.file.size });
-    res.json({ ok: true, fileId, filename: finalName, totalFiles: total });
+
+    if (dbType === "mysql") {
+      await pool.query(
+        "INSERT INTO files (id, owner, filename, size) VALUES (?, ?, ?, ?)",
+        [fileId, req.user.sub, finalName, req.file.size]
+      );
+      const [rows] = await pool.query("SELECT COUNT(*) AS c FROM files WHERE owner=?", [req.user.sub]);
+      const total = rows[0]?.c ?? 0;
+      log("UPLOAD: ok", { owner: req.user.sub, fileId, size: req.file.size });
+      return res.json({ ok: true, fileId, filename: finalName, totalFiles: total });
+    } else {
+      sqliteDb.prepare(
+        "INSERT INTO files (id, owner, filename, size, uploaded_at) VALUES (?, ?, ?, ?, datetime('now'))"
+      ).run(fileId, req.user.sub, finalName, req.file.size);
+      const total = sqliteDb.prepare("SELECT COUNT(*) AS c FROM files WHERE owner=?").get(req.user.sub).c;
+      log("UPLOAD: ok", { owner: req.user.sub, fileId, size: req.file.size });
+      return res.json({ ok: true, fileId, filename: finalName, totalFiles: total });
+    }
   } catch (e) {
     log("UPLOAD: error", e.message);
     res.status(500).json({ ok: false, error: e.message });
   }
 });
 
-// list files
-app.get("/files", auth, (req, res) => {
+// ---------- List files (paged) ----------
+app.get("/files", auth, async (req, res) => {
   try {
     const page = Math.max(1, parseInt(req.query.page || "1", 10));
     const size = Math.min(50, Math.max(1, parseInt(req.query.size || "10", 10)));
     const offset = (page - 1) * size;
-    const items = db.prepare(
-      "SELECT id, filename, size, uploaded_at FROM files WHERE owner=? ORDER BY uploaded_at DESC LIMIT ? OFFSET ?"
-    ).all(req.user.sub, size, offset);
-    const total = db.prepare("SELECT COUNT(*) AS c FROM files WHERE owner=?").get(req.user.sub).c;
-    log("FILES:", { owner: req.user.sub, page, size, count: items.length, total });
-    res.json({ ok: true, page, size, total, items });
+
+    if (dbType === "mysql") {
+      const [items] = await pool.query(
+        "SELECT id, filename, size, uploaded_at FROM files WHERE owner=? ORDER BY uploaded_at DESC LIMIT ? OFFSET ?",
+        [req.user.sub, size, offset]
+      );
+      const [rows] = await pool.query("SELECT COUNT(*) AS c FROM files WHERE owner=?", [req.user.sub]);
+      const total = rows[0]?.c ?? 0;
+      log("FILES:", { owner: req.user.sub, page, size, count: items.length, total });
+      return res.json({ ok: true, page, size, total, items });
+    } else {
+      const items = sqliteDb.prepare(
+        "SELECT id, filename, size, uploaded_at FROM files WHERE owner=? ORDER BY uploaded_at DESC LIMIT ? OFFSET ?"
+      ).all(req.user.sub, size, offset);
+      const total = sqliteDb.prepare("SELECT COUNT(*) AS c FROM files WHERE owner=?").get(req.user.sub).c;
+      log("FILES:", { owner: req.user.sub, page, size, count: items.length, total });
+      return res.json({ ok: true, page, size, total, items });
+    }
   } catch (e) {
     log("FILES: error", e.message);
     res.status(500).json({ ok: false, error: e.message });
   }
 });
 
-// list jobs
-app.get("/jobs", auth, (req, res) => {
+// ---------- List jobs (paged) ----------
+app.get("/jobs", auth, async (req, res) => {
   try {
     const page = Math.max(1, parseInt(req.query.page || "1", 10));
     const size = Math.min(50, Math.max(1, parseInt(req.query.size || "10", 10)));
     const offset = (page - 1) * size;
-    const items = db.prepare(
-      `SELECT id, file_id, status, created_at, updated_at, output_filename
-       FROM jobs WHERE owner=? ORDER BY created_at DESC LIMIT ? OFFSET ?`
-    ).all(req.user.sub, size, offset);
-    const total = db.prepare("SELECT COUNT(*) AS c FROM jobs WHERE owner=?").get(req.user.sub).c;
-    log("JOBS(list):", { owner: req.user.sub, page, size, count: items.length, total });
-    res.json({ ok: true, page, size, total, items });
+
+    if (dbType === "mysql") {
+      const [items] = await pool.query(
+        `SELECT id, file_id, status, created_at, updated_at, output_filename
+         FROM jobs WHERE owner=? ORDER BY created_at DESC LIMIT ? OFFSET ?`,
+        [req.user.sub, size, offset]
+      );
+      const [rows] = await pool.query("SELECT COUNT(*) AS c FROM jobs WHERE owner=?", [req.user.sub]);
+      const total = rows[0]?.c ?? 0;
+      log("JOBS(list):", { owner: req.user.sub, page, size, count: items.length, total });
+      return res.json({ ok: true, page, size, total, items });
+    } else {
+      const items = sqliteDb.prepare(
+        `SELECT id, file_id, status, created_at, updated_at, output_filename
+         FROM jobs WHERE owner=? ORDER BY created_at DESC LIMIT ? OFFSET ?`
+      ).all(req.user.sub, size, offset);
+      const total = sqliteDb.prepare("SELECT COUNT(*) AS c FROM jobs WHERE owner=?").get(req.user.sub).c;
+      log("JOBS(list):", { owner: req.user.sub, page, size, count: items.length, total });
+      return res.json({ ok: true, page, size, total, items });
+    }
   } catch (e) {
     log("JOBS(list): error", e.message);
     res.status(500).json({ ok: false, error: e.message });
   }
 });
 
-// single job
-app.get("/jobs/:jobId", auth, (req, res) => {
-  const j = db.prepare("SELECT * FROM jobs WHERE id=? AND owner=?").get(req.params.jobId, req.user.sub);
+// ---------- Single job ----------
+app.get("/jobs/:jobId", auth, async (req, res) => {
+  let j;
+  if (dbType === "mysql") {
+    const [rows] = await pool.query("SELECT * FROM jobs WHERE id=? AND owner=?", [req.params.jobId, req.user.sub]);
+    j = rows[0];
+  } else {
+    j = sqliteDb.prepare("SELECT * FROM jobs WHERE id=? AND owner=?").get(req.params.jobId, req.user.sub);
+  }
   if (!j) return res.status(404).json({ ok: false, error: "not found" });
   res.json({ ok: true, job: { ...j, params: JSON.parse(j.params) } });
 });
 
-// job logs
+// ---------- Job logs (in-memory, unchanged) ----------
 const jobLogs = new Map(); // jobId => lines[]
-app.get("/jobs/:jobId/logs", auth, (req, res) => {
-  const j = db.prepare("SELECT id FROM jobs WHERE id=? AND owner=?").get(req.params.jobId, req.user.sub);
+app.get("/jobs/:jobId/logs", auth, async (req, res) => {
+  let j;
+  if (dbType === "mysql") {
+    const [rows] = await pool.query("SELECT id FROM jobs WHERE id=? AND owner=?", [req.params.jobId, req.user.sub]);
+    j = rows[0];
+  } else {
+    j = sqliteDb.prepare("SELECT id FROM jobs WHERE id=? AND owner=?").get(req.params.jobId, req.user.sub);
+  }
   if (!j) return res.status(404).json({ ok: false, error: "not found" });
   res.json({ ok: true, logs: jobLogs.get(req.params.jobId) || [] });
 });
 
-// download
-app.get("/download/original/:fileId", auth, (req, res) => {
-  const f = db.prepare("SELECT * FROM files WHERE id=? AND owner=?").get(req.params.fileId, req.user.sub);
+// ---------- Download ----------
+app.get("/download/original/:fileId", auth, async (req, res) => {
+  let f;
+  if (dbType === "mysql") {
+    const [rows] = await pool.query("SELECT * FROM files WHERE id=? AND owner=?", [req.params.fileId, req.user.sub]);
+    f = rows[0];
+  } else {
+    f = sqliteDb.prepare("SELECT * FROM files WHERE id=? AND owner=?").get(req.params.fileId, req.user.sub);
+  }
   if (!f) return res.status(404).json({ ok: false, error: "not found" });
   res.download(path.join(UP_DIR, f.filename));
 });
-app.get("/download/transcoded/:jobId", auth, (req, res) => {
-  const j = db.prepare("SELECT * FROM jobs WHERE id=? AND owner=?").get(req.params.jobId, req.user.sub);
-  if (!j || j.status !== "succeeded" || !j.output_filename) return res.status(404).json({ ok: false, error: "not ready" });
+
+app.get("/download/transcoded/:jobId", auth, async (req, res) => {
+  let j;
+  if (dbType === "mysql") {
+    const [rows] = await pool.query("SELECT * FROM jobs WHERE id=? AND owner=?", [req.params.jobId, req.user.sub]);
+    j = rows[0];
+  } else {
+    j = sqliteDb.prepare("SELECT * FROM jobs WHERE id=? AND owner=?").get(req.params.jobId, req.user.sub);
+  }
+  if (!j || j.status !== "succeeded" || !j.output_filename) {
+    return res.status(404).json({ ok: false, error: "not ready" });
+  }
   res.download(path.join(OUT_DIR, j.output_filename));
 });
 
-// helper: select codecs/options per format
+// ---------- Codec helper (same behavior as your version) ----------
 function codecsFor(format) {
   if (format === "webm") {
-    return {
-      v: "libvpx-vp9",
-      a: "libopus",
-      extra: ["-b:v", "0"] 
-    };
+    return { v: "libvpx-vp9", a: "libopus", extra: ["-b:v", "0"] };
   }
   // mp4/mov/mkv/avi
-  return {
-    v: "libx264",
-    a: "aac",
-    extra: []
-  };
+  return { v: "libx264", a: "aac", extra: [] };
 }
 
-// transcode 
-app.post("/transcode/:fileId", auth, (req, res) => {
-  const f = db.prepare("SELECT * FROM files WHERE id=? AND owner=?").get(req.params.fileId, req.user.sub);
+// ---------- Transcode (progress + logging preserved) ----------
+app.post("/transcode/:fileId", auth, async (req, res) => {
+  let f;
+  if (dbType === "mysql") {
+    const [rows] = await pool.query("SELECT * FROM files WHERE id=? AND owner=?", [req.params.fileId, req.user.sub]);
+    f = rows[0];
+  } else {
+    f = sqliteDb.prepare("SELECT * FROM files WHERE id=? AND owner=?").get(req.params.fileId, req.user.sub);
+  }
   if (!f) return res.status(404).json({ ok: false, error: "file not found" });
 
   const allowed = ["mp4", "mkv", "mov", "avi", "webm"];
@@ -212,7 +329,7 @@ app.post("/transcode/:fileId", auth, (req, res) => {
     crf     = Number(process.env.DEFAULT_CRF ?? 28),
     threads = Number(process.env.DEFAULT_THREADS ?? 1),
     scale   = process.env.DEFAULT_SCALE   || null,
-    format  = (req.body && req.body.format) ? String(req.body.format).toLowerCase() : "mp4"
+    format  = (req.body && req.body.format) ? String(req.body.format).toLowerCase() : "mp4",
   } = req.body || {};
 
   if (!allowed.includes(format)) {
@@ -224,11 +341,21 @@ app.post("/transcode/:fileId", auth, (req, res) => {
   const inputPath  = path.join(UP_DIR, f.filename);
   const outputPath = path.join(OUT_DIR, outName);
 
-  db.prepare(
-    `INSERT INTO jobs (id, owner, file_id, status, params, created_at, updated_at)
-     VALUES (?, ?, ?, 'running', ?, datetime('now'), datetime('now'))`
-  ).run(jobId, req.user.sub, f.id, JSON.stringify({ preset, crf, threads, scale, format }));
+  // Create job (running)
+  const paramsJson = JSON.stringify({ preset, crf, threads, scale, format });
+  if (dbType === "mysql") {
+    await pool.query(
+      "INSERT INTO jobs (id, owner, file_id, status, params) VALUES (?, ?, ?, 'running', ?)",
+      [jobId, req.user.sub, f.id, paramsJson]
+    );
+  } else {
+    sqliteDb.prepare(
+      `INSERT INTO jobs (id, owner, file_id, status, params, created_at, updated_at)
+       VALUES (?, ?, ?, 'running', ?, datetime('now'), datetime('now'))`
+    ).run(jobId, req.user.sub, f.id, paramsJson);
+  }
 
+  // In-memory logs (same as your original)
   jobLogs.set(jobId, []);
   const pushLog = (line) => {
     const arr = jobLogs.get(jobId) || [];
@@ -238,18 +365,17 @@ app.post("/transcode/:fileId", auth, (req, res) => {
   };
 
   log("TRANSCODE: start", { jobId, fileId: f.id, preset, crf, threads, scale, format });
-  pushLog(`start: ${new Date().toISOString()}`);
+  pushLog(`start: ${nowIso()}`);
   pushLog(`input: ${inputPath}`);
   pushLog(`output: ${outputPath}`);
 
   const co = codecsFor(format);
   const common = [
     "-preset", String(preset),
-    "-crf",    String(crf),
-    "-threads",String(threads),
+    "-crf", String(crf),
+    "-threads", String(threads),
     "-y"
   ];
-
   if (format === "mp4" || format === "mov") common.push("-movflags", "faststart");
 
   const cmd = ffmpeg(inputPath)
@@ -259,33 +385,43 @@ app.post("/transcode/:fileId", auth, (req, res) => {
     .outputOptions([...common, ...co.extra])
     .on("start", (cmdline) => {
       pushLog(`ffmpeg cmd: ${cmdline}`);
-      db.prepare("UPDATE jobs SET updated_at=datetime('now') WHERE id=?").run(jobId);
+      if (dbType === "mysql") pool.query("UPDATE jobs SET updated_at=NOW() WHERE id=?", [jobId]).catch(() => {});
+      else sqliteDb.prepare("UPDATE jobs SET updated_at=datetime('now') WHERE id=?").run(jobId);
     })
     .on("progress", (p) => {
       pushLog(`progress: ${JSON.stringify(p)}`);
-      db.prepare("UPDATE jobs SET updated_at=datetime('now') WHERE id=?").run(jobId);
+      if (dbType === "mysql") pool.query("UPDATE jobs SET updated_at=NOW() WHERE id=?", [jobId]).catch(() => {});
+      else sqliteDb.prepare("UPDATE jobs SET updated_at=datetime('now') WHERE id=?").run(jobId);
     })
     .on("stderr", (line) => pushLog(line))
     .on("error", (err) => {
       log("TRANSCODE: ffmpeg error", err.message);
       pushLog(`error: ${err.message}`);
-      db.prepare("UPDATE jobs SET status='failed', updated_at=datetime('now') WHERE id=?").run(jobId);
+      if (dbType === "mysql") pool.query("UPDATE jobs SET status='failed', updated_at=NOW() WHERE id=?", [jobId]).catch(() => {});
+      else sqliteDb.prepare("UPDATE jobs SET status='failed', updated_at=datetime('now') WHERE id=?").run(jobId);
     })
     .on("end", () => {
       try {
         const stat = fs.statSync(outputPath);
         if (!stat || stat.size === 0) {
           pushLog("end: output size is 0 -> failed");
-          db.prepare("UPDATE jobs SET status='failed', updated_at=datetime('now') WHERE id=?").run(jobId);
+          if (dbType === "mysql") pool.query("UPDATE jobs SET status='failed', updated_at=NOW() WHERE id=?", [jobId]).catch(() => {});
+          else sqliteDb.prepare("UPDATE jobs SET status='failed', updated_at=datetime('now') WHERE id=?").run(jobId);
           return;
         }
         pushLog(`end: ok size=${stat.size}`);
         log("TRANSCODE: end", { jobId, outName, size: stat.size });
-        db.prepare("UPDATE jobs SET status='succeeded', output_filename=?, updated_at=datetime('now') WHERE id=?")
-          .run(outName, jobId);
+        if (dbType === "mysql") {
+          pool.query("UPDATE jobs SET status='succeeded', output_filename=?, updated_at=NOW() WHERE id=?", [outName, jobId]).catch(() => {});
+        } else {
+          sqliteDb.prepare(
+            "UPDATE jobs SET status='succeeded', output_filename=?, updated_at=datetime('now') WHERE id=?"
+          ).run(outName, jobId);
+        }
       } catch (e) {
         pushLog(`end-check error: ${e.message}`);
-        db.prepare("UPDATE jobs SET status='failed', updated_at=datetime('now') WHERE id=?").run(jobId);
+        if (dbType === "mysql") pool.query("UPDATE jobs SET status='failed', updated_at=NOW() WHERE id=?", [jobId]).catch(() => {});
+        else sqliteDb.prepare("UPDATE jobs SET status='failed', updated_at=datetime('now') WHERE id=?").run(jobId);
       }
     });
 
@@ -295,7 +431,7 @@ app.post("/transcode/:fileId", auth, (req, res) => {
   res.json({ ok: true, jobId });
 });
 
-// --- start ---
+// ---------- Start server ----------
 app.listen(PORT, () => {
   console.log(`API listening on ${PORT}`);
 });
