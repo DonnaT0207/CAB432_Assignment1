@@ -34,6 +34,8 @@
       border:1px solid rgba(255,255,255,0.18);outline:none;padding:8px 10px;border-radius:10px;min-width:140px}
     input:focus{box-shadow:var(--ring);border-color:rgba(96,165,250,.5)}
     input[type="file"]{color:#cbd5e1}
+    select{background:rgba(255,255,255,0.06);color:var(--text);border:1px solid rgba(255,255,255,0.18);
+      padding:8px 10px;border-radius:10px}
     .list{display:grid;gap:10px}
     .item{border:1px dashed rgba(255,255,255,0.18);border-radius:12px;padding:12px;display:grid;gap:8px;background:rgba(255,255,255,0.035)}
     .item-head{display:flex;justify-content:space-between;align-items:center;gap:10px}
@@ -46,6 +48,7 @@
     @keyframes spin{to{transform:rotate(360deg)}}
     .small{font-size:12px}.sep{opacity:.35;margin:0 6px}
     pre{white-space:pre-wrap;color:#cbd5e1}
+    .pager{display:flex;align-items:center;gap:8px}
   </style>
 </head>
 <body>
@@ -88,9 +91,30 @@
     <section class="card">
       <div class="item-head">
         <h2>3) Your files</h2>
-        <div class="actions"><button id="btnList" class="btn secondary" disabled>Refresh files</button></div>
+        <div class="actions">
+          <input id="filesQ" type="text" placeholder="Search name..." style="min-width:160px">
+          <select id="filesSort">
+            <option value="uploaded_at">Uploaded time</option>
+            <option value="size_bytes">Size</option>
+            <option value="filename">Filename</option>
+          </select>
+          <select id="filesOrder">
+            <option value="desc">Desc</option>
+            <option value="asc">Asc</option>
+          </select>
+          <select id="filesSize">
+            <option value="5">5</option><option value="10" selected>10</option><option value="20">20</option>
+          </select>
+          <button id="btnList" class="btn secondary" disabled>Refresh files</button>
+        </div>
       </div>
       <div id="files" class="list"></div>
+      <div class="row pager">
+        <button id="filesPrev" class="btn secondary" disabled>Prev</button>
+        <span class="small">Page <b id="filesPage">1</b></span>
+        <button id="filesNext" class="btn secondary" disabled>Next</button>
+        <span class="small" id="filesTotal" style="opacity:.7"></span>
+      </div>
     </section>
 
     <!-- 4) Jobs -->
@@ -98,6 +122,25 @@
       <div class="item-head">
         <h2>4) Jobs</h2>
         <div class="actions">
+          <select id="jobStatus">
+            <option value="">All</option>
+            <option value="running">Running</option>
+            <option value="completed">Completed</option>
+            <option value="failed">Failed</option>
+            <option value="queued">Queued</option>
+          </select>
+          <select id="jobsSort">
+            <option value="updated_at">Updated</option>
+            <option value="created_at">Created</option>
+            <option value="status">Status</option>
+          </select>
+          <select id="jobsOrder">
+            <option value="desc">Desc</option>
+            <option value="asc">Asc</option>
+          </select>
+          <select id="jobsSize">
+            <option value="5">5</option><option value="10" selected>10</option><option value="20">20</option>
+          </select>
           <button id="btnJobs" class="btn secondary" disabled>Refresh jobs</button>
           <label class="small" style="opacity:.7;display:flex;align-items:center;gap:6px;">
             <input type="checkbox" id="autoJobs" checked disabled> Auto refresh every 5s
@@ -105,6 +148,12 @@
         </div>
       </div>
       <div id="jobs" class="list"></div>
+      <div class="row pager">
+        <button id="jobsPrev" class="btn secondary" disabled>Prev</button>
+        <span class="small">Page <b id="jobsPage">1</b></span>
+        <button id="jobsNext" class="btn secondary" disabled>Next</button>
+        <span class="small" id="jobsTotal" style="opacity:.7"></span>
+      </div>
     </section>
   </div>
 
@@ -114,6 +163,10 @@
 const BASE = location.origin;
 const TRANSCODE_COST_CENTS = 50;
 let token=null, jobsTimer=null;
+
+// pagination state
+let filesPage=1, jobsPage=1;
+
 const $ = s => document.querySelector(s);
 function toast(msg,type="success",t=2200){const w=$("#toasts");const d=document.createElement("div");
 d.textContent=msg; d.style.padding="10px 12px"; d.style.borderRadius="12px";
@@ -127,10 +180,16 @@ if(r.status===401){token=null;toggleUI(false);throw new Error("Unauthorized")} r
 function esc(s){return (s==null)?'':String(s).replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;')}
 function setBalance(cents){ $("#bal").textContent=(Number(cents||0)/100).toFixed(2); }
 
+// debounce
+function debounce(fn, delay=300){ let t; return (...args)=>{ clearTimeout(t); t=setTimeout(()=>fn(...args), delay); }; }
+
 // UI toggle
 function toggleUI(on){
-  $("#file").disabled=!on; $("#btnUpload").disabled=!on; $("#btnList").disabled=!on; $("#btnJobs").disabled=!on;
-  $("#btnLogout").disabled=!on; $("#btnLogin").disabled=on; $("#autoJobs").disabled=!on; $("#btnTopup").disabled=!on;
+  const disabled = !on;
+  ["file","btnUpload","btnList","btnJobs","btnLogout","btnTopup","autoJobs","filesQ","filesSort","filesOrder","filesSize","jobStatus","jobsSort","jobsOrder","jobsSize"].forEach(id=>{
+    const el=$("#"+id); if(el) el.disabled=disabled;
+  });
+  $("#btnLogin").disabled=on;
   $("#tok").textContent=on?(token.slice(0,24)+'...'):'-';
   if(!on){ setAuth('Not logged in','warn'); $("#files").innerHTML=''; $("#jobs").innerHTML=''; setBalance(0); clearInterval(jobsTimer); }
   else{ setAuth('Logged in','success'); refreshMe(); listFiles(); listJobs(); jobsTimer=setInterval(()=>token&&listJobs(),5000); }
@@ -166,15 +225,32 @@ $("#btnUpload").onclick = async ()=>{
   const r=await guardFetch(BASE+'/upload',{method:'POST',body:fd});
   const j=await r.json().catch(()=>null);
   $("#upRes").textContent = j?JSON.stringify(j,null,2):'';
-  if(r.ok){toast('Uploaded'); listFiles();} else toast('Upload failed','error');
+  if(r.ok){toast('Uploaded'); filesPage=1; listFiles();} else toast('Upload failed','error');
 };
 
-// files
-$("#btnList").onclick=()=>listFiles();
+// ===== Files =====
+$("#btnList").onclick=()=>{ filesPage=1; listFiles(); };
+$("#filesPrev").onclick=()=>{ if(filesPage>1){ filesPage--; listFiles(); } };
+$("#filesNext").onclick=()=>{ filesPage++; listFiles(); };
+
+// 自动刷新：输入/选择变动
+$("#filesQ").oninput = debounce(()=>{ filesPage=1; listFiles(); }, 300);
+$("#filesSort").onchange = ()=>{ filesPage=1; listFiles(); };
+$("#filesOrder").onchange = ()=>{ filesPage=1; listFiles(); };
+$("#filesSize").onchange = ()=>{ filesPage=1; listFiles(); };
+
 async function listFiles(){
-  const r=await guardFetch(BASE+'/files?page=1&size=50'); const j=await r.json().catch(()=>null);
+  const q = encodeURIComponent($("#filesQ").value||"");
+  const sort = $("#filesSort").value;
+  const order = $("#filesOrder").value;
+  const size = parseInt($("#filesSize").value,10)||10;
+
+  const r=await guardFetch(`${BASE}/files?page=${filesPage}&size=${size}&q=${q}&sort=${sort}&order=${order}`);
+  const j=await r.json().catch(()=>null);
+
+  const total=j?.total||0;
   const box=$("#files"); box.innerHTML='';
-  const items=(j&&j.items)||[]; if(items.length===0){ box.innerHTML='<div class="small" style="opacity:.7">No files yet.</div>'; return; }
+  const items=(j&&j.items)||[]; if(items.length===0){ box.innerHTML='<div class="small" style="opacity:.7">No files.</div>'; }
   items.forEach(it=>{
     const el=document.createElement('div'); el.className='item';
     const sizeMB=(Number(it.size_bytes||0)/1024/1024).toFixed(2);
@@ -202,6 +278,13 @@ async function listFiles(){
     await guardFetch(BASE+'/files/'+encodeURIComponent(b.dataset.id),{method:'DELETE'}); listFiles(); listJobs();
   });
   box.querySelectorAll('.btnOrig').forEach(b=>b.onclick=downloadOriginal);
+
+  // pager
+  $("#filesPage").textContent=String(j?.page||filesPage);
+  $("#filesTotal").textContent=`Total: ${total}`;
+  const maxPage = Math.max(1, Math.ceil(total / size));
+  $("#filesPrev").disabled = (filesPage<=1);
+  $("#filesNext").disabled = (filesPage>=maxPage);
 }
 
 async function downloadOriginal(e){
@@ -212,8 +295,16 @@ async function downloadOriginal(e){
   const a=document.createElement('a'); a.href=url; a.download=''; a.click(); URL.revokeObjectURL(url);
 }
 
-// jobs
-$("#btnJobs").onclick=()=>listJobs();
+// ===== Jobs =====
+$("#btnJobs").onclick=()=>{ jobsPage=1; listJobs(); };
+$("#jobsPrev").onclick=()=>{ if(jobsPage>1){ jobsPage--; listJobs(); } };
+$("#jobsNext").onclick=()=>{ jobsPage++; listJobs(); };
+
+// 自动刷新：选择变动
+$("#jobStatus").onchange = ()=>{ jobsPage=1; listJobs(); };
+$("#jobsSort").onchange = ()=>{ jobsPage=1; listJobs(); };
+$("#jobsOrder").onchange = ()=>{ jobsPage=1; listJobs(); };
+$("#jobsSize").onchange = ()=>{ jobsPage=1; listJobs(); };
 
 async function transcode(fileId){
   const fmtEl=document.getElementById('fmt-'+fileId);
@@ -229,9 +320,17 @@ async function transcode(fileId){
 }
 
 async function listJobs(){
-  const r=await guardFetch(BASE+'/jobs?page=1&size=50'); const j=await r.json().catch(()=>null);
+  const status = $("#jobStatus").value;
+  const sort = $("#jobsSort").value;
+  const order = $("#jobsOrder").value;
+  const size = parseInt($("#jobsSize").value,10)||10;
+
+  const r=await guardFetch(`${BASE}/jobs?page=${jobsPage}&size=${size}&sort=${sort}&order=${order}${status?`&status=${status}`:''}`);
+  const j=await r.json().catch(()=>null);
+
+  const total=j?.total||0;
   const box=$("#jobs"); box.innerHTML='';
-  const items=(j&&j.items)||[]; if(items.length===0){ box.innerHTML='<div class="small" style="opacity:.7">No jobs yet.</div>'; return; }
+  const items=(j&&j.items)||[]; if(items.length===0){ box.innerHTML='<div class="small" style="opacity:.7">No jobs.</div>'; return; }
 
   items.forEach(job=>{
     const status=String(job.status||'').toLowerCase();
@@ -256,6 +355,13 @@ async function listJobs(){
 
   box.querySelectorAll('.btnLogs').forEach(b=>b.onclick=showLogs);
   box.querySelectorAll('.btnDown').forEach(b=>b.onclick=downloadOutput);
+
+  // pager
+  $("#jobsPage").textContent=String(j?.page||jobsPage);
+  $("#jobsTotal").textContent=`Total: ${total}`;
+  const maxPage = Math.max(1, Math.ceil(total / size));
+  $("#jobsPrev").disabled = (jobsPage<=1);
+  $("#jobsNext").disabled = (jobsPage>=maxPage);
 }
 
 async function showLogs(e){
