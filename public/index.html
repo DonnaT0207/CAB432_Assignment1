@@ -12,63 +12,40 @@
       --pill-bg:rgba(255,255,255,0.08);--shadow:0 10px 30px rgba(0,0,0,0.35);
       --ring:0 0 0 3px rgba(96,165,250,0.35);--radius:14px;
     }
-    body{
-      margin:0;color:var(--text);font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Arial;
+    body{ margin:0;color:var(--text);font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Arial;
       background:radial-gradient(1200px 800px at 10% -10%,#1f2937 0%,transparent 50%),
                  radial-gradient(1000px 700px at 110% 10%,#0ea5e9 0%,transparent 60%),
-                 linear-gradient(180deg,var(--bg-grad-1),var(--bg-grad-2));
-      min-height:100svh;
-    }
+                 linear-gradient(180deg,var(--bg-grad-1),var(--bg-grad-2)); min-height:100svh; }
     .container{max-width:1024px;margin:32px auto;padding:0 16px;}
     h1{font-weight:800;letter-spacing:.3px;margin:8px 0 22px;font-size:clamp(26px,3vw,36px);}
-    .grid{display:grid;gap:16px;} @media(min-width:900px){.grid-2{grid-template-columns:1fr 1fr}}
+    .grid{display:grid;gap:16px} @media(min-width:900px){.grid-2{grid-template-columns:1fr 1fr}}
     .card{background:var(--card);border:1px solid var(--card-border);border-radius:var(--radius);
-      padding:18px 18px 16px;box-shadow:var(--shadow);backdrop-filter:blur(6px);
-      transition:transform .15s ease,border-color .2s ease;}
+      padding:18px 18px 16px;box-shadow:var(--shadow);backdrop-filter:blur(6px);transition:transform .15s ease,border-color .2s ease;}
     .card:hover{transform:translateY(-1px);border-color:rgba(255,255,255,0.2)}
     .card h2{margin:0 0 12px;font-size:18px;letter-spacing:.2px}
-    .subtle{color:var(--muted);font-size:14px}
-    .btn{appearance:none;border:1px solid transparent;border-radius:10px;padding:8px 12px;
-      font-weight:600;letter-spacing:.2px;transition:transform .05s ease,background .15s ease,
-      border-color .15s ease,color .15s ease;cursor:pointer;user-select:none}
-    .btn:active{transform:translateY(1px) scale(.99)}
+    .btn{appearance:none;border:1px solid transparent;border-radius:10px;padding:8px 12px;font-weight:600;letter-spacing:.2px;
+      transition:transform .05s ease,background .15s ease,border-color .15s ease,color .15s ease;cursor:pointer;user-select:none}
     .btn[disabled]{opacity:.5;cursor:not-allowed}
-    .btn.primary{background:linear-gradient(180deg,var(--primary),var(--primary-600));color:#fff;
-      box-shadow:0 6px 18px rgba(37,99,235,.35)}
+    .btn.primary{background:linear-gradient(180deg,var(--primary),var(--primary-600));color:#fff;box-shadow:0 6px 18px rgba(37,99,235,.35)}
     .btn.secondary{background:transparent;color:var(--text);border-color:rgba(255,255,255,0.2)}
-    .btn.ghost{background:transparent;color:var(--muted)}
     .btn.success{background:linear-gradient(180deg,#34d399,#10b981);color:#052e1f}
-    .btn.danger{background:linear-gradient(180deg,#fda4af,#ef4444);color:#3b0a0a}
     .row{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
-    input[type="text"],input[type="password"]{background:rgba(255,255,255,0.06);color:var(--text);
-      border:1px solid rgba(255,255,255,0.18);outline:none;padding:8px 10px;border-radius:10px;min-width:160px}
+    input[type="text"],input[type="password"],input[type="number"]{background:rgba(255,255,255,0.06);color:var(--text);
+      border:1px solid rgba(255,255,255,0.18);outline:none;padding:8px 10px;border-radius:10px;min-width:140px}
     input:focus{box-shadow:var(--ring);border-color:rgba(96,165,250,.5)}
-    input[type="file"]{color:var(--muted)}
-    code{background:rgba(255,255,255,0.08);padding:2px 6px;border-radius:6px}
-    .muted{color:var(--muted)}
+    input[type="file"]{color:#cbd5e1}
     .list{display:grid;gap:10px}
-    .item{border:1px dashed rgba(255,255,255,0.18);border-radius:12px;padding:12px;display:grid;gap:8px;
-      background:rgba(255,255,255,0.035)}
+    .item{border:1px dashed rgba(255,255,255,0.18);border-radius:12px;padding:12px;display:grid;gap:8px;background:rgba(255,255,255,0.035)}
     .item-head{display:flex;justify-content:space-between;align-items:center;gap:10px}
     .item-title{font-weight:700}
     .actions{display:flex;gap:8px;flex-wrap:wrap}
-    .pill{display:inline-flex;align-items:center;gap:6px;border-radius:999px;padding:4px 10px;font-weight:700;
-      font-size:12px;background:var(--pill-bg);border:1px solid rgba(255,255,255,0.16)}
+    .pill{display:inline-flex;align-items:center;gap:6px;border-radius:999px;padding:4px 10px;font-weight:700;font-size:12px;
+      background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.16)}
     .pill.success{color:#22c55e}.pill.warn{color:#f59e0b}.pill.danger{color:#ef4444}
-    .spinner{width:12px;height:12px;border-radius:999px;border:2px solid rgba(255,255,255,.2);
-      border-top-color:var(--primary);animation:spin .8s linear infinite}
+    .spinner{width:12px;height:12px;border-radius:999px;border:2px solid rgba(255,255,255,.2);border-top-color:var(--primary);animation:spin .8s linear infinite}
     @keyframes spin{to{transform:rotate(360deg)}}
-    .small{font-size:12px}.sep{opacity:.35;margin:0 6px}.empty{font-style:italic;color:var(--muted);padding:6px 2px}
-    .toasts{position:fixed;right:18px;bottom:18px;display:grid;gap:10px;z-index:50}
-    .toast{background:rgba(17,24,39,0.9);color:#e5e7eb;border:1px solid rgba(255,255,255,0.15);border-radius:12px;
-      padding:10px 12px;box-shadow:var(--shadow);min-width:220px;animation:pop .15s ease-out}
-    .toast.success{border-color:rgba(16,185,129,.45)}.toast.error{border-color:rgba(239,68,68,.45)}
-    @keyframes pop{from{transform:translateY(6px);opacity:0}to{transform:none;opacity:1}}
-    .section-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px}
-    select.format{
-      background:rgba(255,255,255,0.06);color:var(--text);border:1px solid rgba(255,255,255,0.18);
-      padding:8px 10px;border-radius:10px
-    }
+    .small{font-size:12px}.sep{opacity:.35;margin:0 6px}
+    pre{white-space:pre-wrap;color:#cbd5e1}
   </style>
 </head>
 <body>
@@ -78,59 +55,52 @@
     <div class="grid grid-2">
       <!-- 1) Login -->
       <section class="card">
-        <div class="section-head">
-          <h2>1) Login</h2>
-          <span class="small muted">JWT auth demo</span>
-        </div>
+        <div class="item-head"><h2>1) Login</h2><span class="small" style="opacity:.7">JWT auth demo</span></div>
         <div class="row">
-          <label class="small">Username</label>
-          <input id="u" type="text" value="admin">
-          <label class="small">Password</label>
-          <input id="p" type="password" value="admin123">
+          <label class="small">Username</label><input id="u" type="text" value="admin">
+          <label class="small">Password</label><input id="p" type="password" value="admin123">
           <button id="btnLogin" class="btn primary">Login</button>
           <button id="btnLogout" class="btn secondary" disabled>Logout</button>
         </div>
         <div class="row small">
           <span>Status:</span>
           <span id="authState" class="pill warn"><span class="spinner" style="display:none"></span> Not logged in</span>
+          <span class="sep">•</span>
+          <span>Balance: $<b id="bal">0.00</b></span>
+          <input id="topupAmt" type="number" min="50" step="50" value="200" title="cents" style="width:110px">
+          <button id="btnTopup" class="btn secondary" disabled>Top up</button>
         </div>
-        <div class="small muted">Token: <code id="tok">-</code></div>
+        <div class="small" style="opacity:.7">Token: <code id="tok">-</code></div>
       </section>
 
       <!-- 2) Upload -->
       <section class="card">
-        <div class="section-head">
-          <h2>2) Upload</h2>
-          <span class="small muted">Send a video to process</span>
-        </div>
+        <div class="item-head"><h2>2) Upload</h2><span class="small" style="opacity:.7">Send a video to process</span></div>
         <div class="row">
           <input id="file" type="file" accept="video/*" disabled />
           <button id="btnUpload" class="btn primary" disabled>Upload</button>
         </div>
-        <pre id="upRes" class="subtle" style="white-space:pre-wrap;"></pre>
+        <pre id="upRes"></pre>
       </section>
     </div>
 
     <!-- 3) Files -->
     <section class="card">
-      <div class="section-head">
+      <div class="item-head">
         <h2>3) Your files</h2>
-        <div class="actions">
-          <button id="btnList" class="btn secondary" disabled>Refresh files</button>
-        </div>
+        <div class="actions"><button id="btnList" class="btn secondary" disabled>Refresh files</button></div>
       </div>
       <div id="files" class="list"></div>
     </section>
 
     <!-- 4) Jobs -->
     <section class="card">
-      <div class="section-head">
+      <div class="item-head">
         <h2>4) Jobs</h2>
         <div class="actions">
           <button id="btnJobs" class="btn secondary" disabled>Refresh jobs</button>
-          <label class="small muted" style="display:flex;align-items:center;gap:6px;">
-            <input type="checkbox" id="autoJobs" checked disabled>
-            Auto refresh every 5s
+          <label class="small" style="opacity:.7;display:flex;align-items:center;gap:6px;">
+            <input type="checkbox" id="autoJobs" checked disabled> Auto refresh every 5s
           </label>
         </div>
       </div>
@@ -138,122 +108,169 @@
     </section>
   </div>
 
-  <div class="toasts" id="toasts"></div>
+  <div id="toasts" style="position:fixed;right:18px;bottom:18px;display:grid;gap:10px;"></div>
 
 <script>
-// --- state & utils ---
 const BASE = location.origin;
-let token = null, jobsInterval = null;
-const $ = (q)=>document.querySelector(q);
-function toast(msg,type="success",t=2500){const w=$("#toasts");const d=document.createElement("div");
-d.className=`toast ${type}`;d.textContent=msg;w.appendChild(d);setTimeout(()=>d.remove(),t)}
-function setAuthPill(text,kind){const p=$("#authState");p.className=`pill ${kind}`;
-p.innerHTML=`${kind==='warn'?'<span class="spinner"></span> ':''}${text}`}
-function toggleUI(on){$("#file").disabled=!on;$("#btnUpload").disabled=!on;$("#btnList").disabled=!on;
-$("#btnJobs").disabled=!on;$("#btnLogout").disabled=!on;$("#btnLogin").disabled=on;$("#autoJobs").disabled=!on;
-$("#tok").textContent=on?(token.slice(0,24)+'...'):'-';
-if(!on){setAuthPill('Not logged in','warn');$("#files").innerHTML='';$("#jobs").innerHTML='';clearInterval(jobsInterval)}
-else{setAuthPill('Logged in','success');listFiles();listJobs();jobsInterval=setInterval(()=>token&&listJobs(),5000)}}
-function authHeaders(){return token?{Authorization:'Bearer '+token}:{}} 
-async function guardFetch(url,opts={}){const r=await fetch(url,{...opts,headers:{...(opts.headers||{}),...authHeaders()}});
-if(r.status===401){token=null;toggleUI(false);throw new Error('Unauthorized')} return r}
-function escapeHtml(s){return (s==null)?'':String(s).replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;').replaceAll("'",'&#39;')}
+const TRANSCODE_COST_CENTS = 50;
+let token=null, jobsTimer=null;
+const $ = s => document.querySelector(s);
+function toast(msg,type="success",t=2200){const w=$("#toasts");const d=document.createElement("div");
+d.textContent=msg; d.style.padding="10px 12px"; d.style.borderRadius="12px";
+d.style.border="1px solid "+(type==="success"?"rgba(16,185,129,.45)":"rgba(239,68,68,.45)");
+d.style.background="rgba(17,24,39,.92)"; d.style.color="#e5e7eb"; d.style.minWidth="220px";
+d.style.boxShadow="0 10px 30px rgba(0,0,0,.35)"; w.appendChild(d); setTimeout(()=>d.remove(),t)}
+function setAuth(text,cls){const p=$("#authState");p.className="pill "+cls;p.innerHTML=(cls==="warn"?'<span class="spinner"></span> ':'')+text;}
+function headers(){return token?{Authorization:'Bearer '+token}:{}} 
+async function guardFetch(url,opts={}){const r=await fetch(url,{...opts,headers:{...(opts.headers||{}),...headers()}});
+if(r.status===401){token=null;toggleUI(false);throw new Error("Unauthorized")} return r}
+function esc(s){return (s==null)?'':String(s).replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;')}
+function setBalance(cents){ $("#bal").textContent=(Number(cents||0)/100).toFixed(2); }
 
-// --- auth ---
+// UI toggle
+function toggleUI(on){
+  $("#file").disabled=!on; $("#btnUpload").disabled=!on; $("#btnList").disabled=!on; $("#btnJobs").disabled=!on;
+  $("#btnLogout").disabled=!on; $("#btnLogin").disabled=on; $("#autoJobs").disabled=!on; $("#btnTopup").disabled=!on;
+  $("#tok").textContent=on?(token.slice(0,24)+'...'):'-';
+  if(!on){ setAuth('Not logged in','warn'); $("#files").innerHTML=''; $("#jobs").innerHTML=''; setBalance(0); clearInterval(jobsTimer); }
+  else{ setAuth('Logged in','success'); refreshMe(); listFiles(); listJobs(); jobsTimer=setInterval(()=>token&&listJobs(),5000); }
+}
+
+// auth
 $("#btnLogin").onclick = async ()=>{
   const r=await fetch(BASE+'/login',{method:'POST',headers:{'content-type':'application/json'},
     body:JSON.stringify({username:$("#u").value,password:$("#p").value})});
-  const j=await r.json().catch(()=>null); if(!j||!j.ok) return toast('Login failed','error');
-  token=j.token; toggleUI(true); toast('Login successful');
+  if(!r.ok){toast('Login failed','error');return;}
+  const j=await r.json(); token=j.authToken; if(!token){toast('Login failed','error');return;}
+  toggleUI(true); toast('Login successful');
 };
-$("#btnLogout").onclick = ()=>{token=null;toggleUI(false);toast('Logged out')};
+$("#btnLogout").onclick = ()=>{ token=null; toggleUI(false); toast('Logged out'); };
 
-// --- upload ---
+// balance & topup
+$("#btnTopup").onclick = async ()=>{
+  const amt = parseInt($("#topupAmt").value,10);
+  if(!Number.isInteger(amt)||amt<=0){ toast('Enter cents, e.g. 200','error'); return; }
+  const r=await guardFetch(BASE+'/accounts/topup',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({amount_cents:amt})});
+  if(!r.ok){ toast('Top up failed','error'); return; }
+  toast('Top up success'); refreshMe();
+};
+async function refreshMe(){
+  const r=await guardFetch(BASE+'/me'); const j=await r.json().catch(()=>null);
+  setBalance(j?.balance_cents||0);
+}
+
+// upload
 $("#btnUpload").onclick = async ()=>{
-  const f=$("#file").files[0]; if(!f) return toast('Choose a video file first','error');
-  const fd=new FormData(); fd.append('video',f);
-  const r=await guardFetch(BASE+'/upload',{method:'POST',body:fd}); const j=await r.json().catch(()=>null);
-  $("#upRes").textContent=JSON.stringify(j,null,2);
-  if(j&&j.ok){toast('Upload successful'); listFiles();} else toast('Upload failed','error');
+  const f=$("#file").files[0]; if(!f) return toast('Choose a file','error');
+  const fd=new FormData(); fd.append('file',f);
+  const r=await guardFetch(BASE+'/upload',{method:'POST',body:fd});
+  const j=await r.json().catch(()=>null);
+  $("#upRes").textContent = j?JSON.stringify(j,null,2):'';
+  if(r.ok){toast('Uploaded'); listFiles();} else toast('Upload failed','error');
 };
 
-// --- files ---
+// files
 $("#btnList").onclick=()=>listFiles();
 async function listFiles(){
   const r=await guardFetch(BASE+'/files?page=1&size=50'); const j=await r.json().catch(()=>null);
-  const box=$("#files"); box.innerHTML=''; const items=j&&j.ok?j.items:[]; if(!items?.length){box.innerHTML='<div class="empty">No files yet.</div>';return;}
+  const box=$("#files"); box.innerHTML='';
+  const items=(j&&j.items)||[]; if(items.length===0){ box.innerHTML='<div class="small" style="opacity:.7">No files yet.</div>'; return; }
   items.forEach(it=>{
     const el=document.createElement('div'); el.className='item';
+    const sizeMB=(Number(it.size_bytes||0)/1024/1024).toFixed(2);
     el.innerHTML=`
       <div class="item-head">
-        <div class="item-title">${escapeHtml(it.filename)}</div>
+        <div class="item-title">${esc(it.filename)}</div>
         <div class="actions">
           <select class="format" id="fmt-${it.id}">
-            <option value="mp4">MP4</option>
-            <option value="mkv">MKV</option>
-            <option value="mov">MOV</option>
-            <option value="avi">AVI</option>
-            <option value="webm">WEBM</option>
+            <option value="mp4">MP4</option><option value="webm">WEBM</option>
           </select>
-          <button class="btn primary btnTrans" data-id="${it.id}">Transcode 720p</button>
-          <button class="btn secondary btnDownOrig" data-id="${it.id}">Download original</button>
+          <button class="btn primary btnTrans" data-id="${it.id}">Transcode 720p (¢${TRANSCODE_COST_CENTS})</button>
+          <button class="btn secondary btnOrig" data-id="${it.id}">Download original</button>
+          <button class="btn secondary btnDel" data-id="${it.id}">Delete</button>
         </div>
       </div>
-      <div class="small muted">
-        id: <code>${escapeHtml(it.id)}</code>
-        <span class="sep">•</span> ${Number(it.size)} bytes
-        <span class="sep">•</span> uploaded: ${escapeHtml(it.uploaded_at)}
+      <div class="small" style="opacity:.75">
+        id: <code>${esc(it.id)}</code> <span class="sep">•</span> ${sizeMB} MB
+        <span class="sep">•</span> uploaded: ${esc(it.uploaded_at||'-')}
       </div>`;
     box.appendChild(el);
   });
   box.querySelectorAll('.btnTrans').forEach(b=>b.onclick=()=>transcode(b.dataset.id));
-  box.querySelectorAll('.btnDownOrig').forEach(b=>b.onclick=async e=>{
-    e.preventDefault(); const r=await guardFetch(BASE+'/download/original/'+encodeURIComponent(b.dataset.id));
-    const blob=await r.blob(); const url=URL.createObjectURL(blob); const a=document.createElement('a');a.href=url;a.download='';a.click();URL.revokeObjectURL(url);
+  box.querySelectorAll('.btnDel').forEach(b=>b.onclick=async ()=>{
+    if(!confirm('Delete this file?')) return;
+    await guardFetch(BASE+'/files/'+encodeURIComponent(b.dataset.id),{method:'DELETE'}); listFiles(); listJobs();
   });
+  box.querySelectorAll('.btnOrig').forEach(b=>b.onclick=downloadOriginal);
 }
 
-// --- jobs ---
+async function downloadOriginal(e){
+  const id=e.currentTarget.dataset.id;
+  const r=await guardFetch(BASE+'/download/original/'+encodeURIComponent(id));
+  if(!r.ok){toast('Download failed','error');return;}
+  const blob=await r.blob(); const url=URL.createObjectURL(blob);
+  const a=document.createElement('a'); a.href=url; a.download=''; a.click(); URL.revokeObjectURL(url);
+}
+
+// jobs
 $("#btnJobs").onclick=()=>listJobs();
+
 async function transcode(fileId){
   const fmtEl=document.getElementById('fmt-'+fileId);
-  const format = fmtEl ? fmtEl.value : 'mp4';
+  const format=fmtEl?fmtEl.value:'mp4';
   const r=await guardFetch(BASE+'/transcode/'+encodeURIComponent(fileId),{
     method:'POST',headers:{'content-type':'application/json'},
-    body:JSON.stringify({ preset:'slow', crf:22, threads:1, scale:'1280:720', format })
+    body:JSON.stringify({format, preset:'slow', crf:22, scale:'1280:720'})
   });
+  if(r.status===402){ toast('Insufficient funds. Please top up.', 'error'); return; }
   const j=await r.json().catch(()=>null);
-  if(!j||!j.ok){toast('Transcode failed','error');return;}
-  toast(`Transcode started → ${format}`);
-  listJobs(); 
+  if(!r.ok||!j?.ok){toast('Transcode failed','error');return;}
+  toast('Transcode started'); refreshMe(); listJobs();
 }
+
 async function listJobs(){
   const r=await guardFetch(BASE+'/jobs?page=1&size=50'); const j=await r.json().catch(()=>null);
-  const box=$("#jobs"); box.innerHTML=''; const items=j&&j.ok?j.items:[]; if(!items?.length){box.innerHTML='<div class="empty">No jobs yet.</div>';return;}
+  const box=$("#jobs"); box.innerHTML='';
+  const items=(j&&j.items)||[]; if(items.length===0){ box.innerHTML='<div class="small" style="opacity:.7">No jobs yet.</div>'; return; }
+
   items.forEach(job=>{
+    const status=String(job.status||'').toLowerCase();
+    const kind=status==='completed'?'success':status==='failed'?'danger':'warn';
     const row=document.createElement('div'); row.className='item';
     row.innerHTML=`
       <div class="item-head">
-        <div class="item-title">Job <code>${escapeHtml(job.id)}</code></div>
+        <div class="item-title">Job <code>${esc(job.id)}</code></div>
         <div class="actions">
-          <span class="pill ${job.status==='succeeded'?'success':job.status==='failed'?'danger':'warn'}">
-            ${job.status==='running'?'<span class="spinner"></span>':''}${escapeHtml(job.status)}
-          </span>
-          ${job.status==='succeeded'?`<button class="btn success btnDownTc" data-id="${job.id}">Download output</button>`:''}
+          <span class="pill ${kind}">${status==='running'?'<span class="spinner"></span> ':''}${esc(status)}</span>
+          ${status==='completed'?`<button class="btn success btnDown" data-id="${job.id}">Download output</button>`:''}
+          <button class="btn secondary btnLogs" data-id="${job.id}">Logs</button>
         </div>
       </div>
-      <div class="small muted">
-        file: <code>${escapeHtml(job.file_id||'-')}</code>
-        <span class="sep">•</span> created: ${escapeHtml(job.created_at||'-')}
-        <span class="sep">•</span> updated: ${escapeHtml(job.updated_at||'-')}
+      <div class="small" style="opacity:.75">
+        progress: ${(job.progress??0).toFixed(0)}% <span class="sep">•</span>
+        updated: ${esc(job.updated_at||'-')} <span class="sep">•</span>
+        charged/refunded: ${(job.charged_cents/100).toFixed(2)} / ${(job.refunded_cents/100).toFixed(2)}
       </div>`;
     box.appendChild(row);
   });
-  box.querySelectorAll('.btnDownTc').forEach(b=>b.onclick=downloadOutput);
+
+  box.querySelectorAll('.btnLogs').forEach(b=>b.onclick=showLogs);
+  box.querySelectorAll('.btnDown').forEach(b=>b.onclick=downloadOutput);
 }
+
+async function showLogs(e){
+  const id=e.currentTarget.dataset.id;
+  const r=await guardFetch(BASE+'/jobs/'+encodeURIComponent(id)+'/logs');
+  const text=await r.text();
+  const w=window.open('','_blank','width=800,height=600');
+  w.document.write('<pre style="font-family:ui-monospace,Menlo,Consolas,monospace;white-space:pre-wrap;">'+(text||'(empty)')+'</pre>');
+}
+
 async function downloadOutput(e){
-  const jobId=e.currentTarget.dataset.id;
-  const r=await guardFetch(BASE+'/download/transcoded/'+encodeURIComponent(jobId));
+  const id=e.currentTarget.dataset.id;
+  const r=await guardFetch(BASE+'/download/transcoded/'+encodeURIComponent(id));
+  if(r.status===409){ toast('Output not ready yet','error'); return; }
+  if(!r.ok){ toast('Download failed','error'); return; }
   const blob=await r.blob(); const url=URL.createObjectURL(blob);
   const a=document.createElement('a'); a.href=url; a.download=''; a.click(); URL.revokeObjectURL(url);
 }
