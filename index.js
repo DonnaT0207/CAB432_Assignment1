@@ -471,4 +471,4 @@ app.get("/outputs",auth,(_req,res)=>{
   res.json({items});
 });
 
-app.listen(PORT, ()=>log(`Server listening on http://0.0.0.0:${PORT}`));
+app.listen(PORT, ()=>log(`Server listening on ${PORT}`));
