@@ -5,4 +5,5 @@ data
 .gitignore
 Dockerfile
 README*
-*.md
+*.md.env
+.env

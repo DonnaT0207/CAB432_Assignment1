@@ -261,6 +261,56 @@ app.get("/files/:id/meta",auth,(req,res)=>{
 
 // OpenSubtitles：Search for subtitles and write ext_meta.opensubtitles
 app.post("/files/:id/subs", auth, async (req,res)=>{
+
+  const OPENSUBTITLES_API_KEY = process.env.OPENSUBTITLES_API_KEY || "";
+
+if (OPENSUBTITLES_API_KEY === "__MOCK__") {
+  const sample = path.join(__dirname, "public", "sample.srt");
+  let srtPath = null;
+  if (fs.existsSync(sample)) {
+    const out = path.join(SUB_DIR, `${req.params.id}.srt`);
+    fs.copyFileSync(sample, out);
+    srtPath = out;
+  }
+  const payload = {
+    opensubtitles: {
+      query: filenameBase,
+      languages,
+      total: 1,
+      top: {
+        id: "mock",
+        language: (languages || "en").split(",")[0],
+        file_id: "mock",
+        srt_path: srtPath,
+        downloaded_at: new Date().toISOString(),
+      },
+      note: "mock mode (no external call)",
+    },
+  };
+  db.prepare(
+    `UPDATE files SET ext_meta=json_patch(COALESCE(ext_meta,'{}'), json(?)) WHERE id=?`
+  ).run(JSON.stringify(payload), req.params.id);
+
+  return res.json({ ok: true, count: 1, picked: payload.opensubtitles.top, srtCached: !!srtPath, mock: true });
+}
+
+if (!OPENSUBTITLES_API_KEY) {
+  const payload = {
+    opensubtitles: {
+      query: filenameBase,
+      languages,
+      total: 0,
+      top: null,
+      note: "disabled: no OPENSUBTITLES_API_KEY on server",
+    },
+  };
+  db.prepare(
+    `UPDATE files SET ext_meta=json_patch(COALESCE(ext_meta,'{}'), json(?)) WHERE id=?`
+  ).run(JSON.stringify(payload), req.params.id);
+
+  return res.json({ ok: true, degraded: true, count: 0, reason: "no-api-key" });
+}
+
   if (!OPENSUBTITLES_API_KEY) return res.status(400).json({ok:false,error:"OPENSUBTITLES_API_KEY missing"});
   const f=db.prepare(`SELECT id FROM files WHERE id=? AND owner=?`).get(req.params.id,req.user.sub);
   if(!f) return res.sendStatus(404);

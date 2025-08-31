@@ -8,3 +8,5 @@ data/
 # sensitive/large files
 *.pem
 *.webm
+.env
+.env
