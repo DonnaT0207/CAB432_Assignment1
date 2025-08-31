@@ -17,8 +17,9 @@ Core criteria
 
 - **ECR Repository name:** video-api
 - **Video timestamp:**
-- **Relevant files:** Dockerfile, .dockerignore
-    - 
+- **Relevant files:**
+    - Dockerfile
+    - .dockerignore
 
 ### Deploy the container
 
