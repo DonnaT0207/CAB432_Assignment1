@@ -1,7 +1,13 @@
+// loadtest.js — drive /transcode against your EC2
+
 import fetch from "node-fetch";
 
-// envs
-const BASE = process.env.BASE || "http://localhost:8080";
+const BASE = process.env.BASE;
+if (!BASE) {
+  console.error('Please set BASE to your EC2 URL, e.g. BASE="http://<EC2-DNS-or-IP>:8080"');
+  process.exit(1);
+}
+
 const USERNAME = process.env.USERNAME || "admin";
 const PASSWORD = process.env.PASSWORD || "admin123";
 const FILE_ID = process.env.FILE_ID; // must be provided

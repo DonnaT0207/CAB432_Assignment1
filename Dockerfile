@@ -1,18 +1,21 @@
-# Dockerfile
-FROM node:20-bookworm-slim
+# ---- base ----
+FROM node:20-bullseye-slim
 
-# ffmpeg + build deps for better-sqlite3
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends ffmpeg python3 build-essential pkg-config make g++ && \
-    rm -rf /var/lib/apt/lists/*
+# better-sqlite3
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3 make g++ ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
 
-WORKDIR /usr/src/app
+WORKDIR /app
+
 COPY package*.json ./
 RUN npm ci --omit=dev
-COPY . .
 
-ENV NODE_ENV=production PORT=8080 \
-    DEFAULT_PRESET=medium DEFAULT_CRF=28 DEFAULT_THREADS=1 DEFAULT_SCALE=
+COPY index.js ./
+COPY public ./public
 
+RUN mkdir -p /app/data/uploads /app/data/outputs /app/data/subtitles
+
+ENV NODE_ENV=production
 EXPOSE 8080
 CMD ["node", "index.js"]

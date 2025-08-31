@@ -1,0 +1,20 @@
+# docker-compose.ec2.yml (recommended for EC2)
+version: "3.9"
+services:
+  api:
+    image: <YOUR_AWS_ACCOUNT_ID>.dkr.ecr.ap-southeast-2.amazonaws.com/video-api:v1-20250830
+    container_name: video-api
+    ports:
+      - "8080:8080"
+    environment:
+      - NODE_ENV=production
+      - JWT_SECRET=prod-secret-change-me
+      - DEFAULT_PRESET=veryfast
+      - DEFAULT_CRF=26
+      - DEFAULT_THREADS=2
+      - DEFAULT_SCALE=1280:-2
+    volumes:
+      - video_data:/usr/src/app/data
+    restart: unless-stopped
+volumes:
+  video_data: {}
