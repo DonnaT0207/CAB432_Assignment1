@@ -12,20 +12,16 @@
       --pill-bg:rgba(255,255,255,0.08);--shadow:0 10px 30px rgba(0,0,0,0.35);
       --ring:0 0 0 3px rgba(96,165,250,0.35);--radius:14px;
     }
-    body{
-      margin:0;color:var(--text);font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Arial;
+    body{margin:0;color:var(--text);font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Arial;
       background:radial-gradient(1200px 800px at 10% -10%,#1f2937 0%,transparent 50%),
                  radial-gradient(1000px 700px at 110% 10%,#0ea5e9 0%,transparent 60%),
-                 linear-gradient(180deg,var(--bg-grad-1),var(--bg-grad-2));
-      min-height:100svh;
-    }
+                 linear-gradient(180deg,var(--bg-grad-1),var(--bg-grad-2));min-height:100svh;}
     .container{max-width:1024px;margin:32px auto;padding:0 16px;}
     h1{font-weight:800;letter-spacing:.3px;margin:8px 0 22px;font-size:clamp(26px,3vw,36px);}
     .grid{display:grid;gap:16px;} @media(min-width:900px){.grid-2{grid-template-columns:1fr 1fr}}
     .card{background:var(--card);border:1px solid var(--card-border);border-radius:var(--radius);
       padding:18px 18px 16px;box-shadow:var(--shadow);backdrop-filter:blur(6px);
       transition:transform .15s ease,border-color .2s ease;}
-    .card:hover{transform:translateY(-1px);border-color:rgba(255,255,255,0.2)}
     .card h2{margin:0 0 12px;font-size:18px;letter-spacing:.2px}
     .subtle{color:var(--muted);font-size:14px}
     .btn{appearance:none;border:1px solid transparent;border-radius:10px;padding:8px 12px;
@@ -36,7 +32,6 @@
     .btn.primary{background:linear-gradient(180deg,var(--primary),var(--primary-600));color:#fff;
       box-shadow:0 6px 18px rgba(37,99,235,.35)}
     .btn.secondary{background:transparent;color:var(--text);border-color:rgba(255,255,255,0.2)}
-    .btn.ghost{background:transparent;color:var(--muted)}
     .btn.success{background:linear-gradient(180deg,#34d399,#10b981);color:#052e1f}
     .btn.danger{background:linear-gradient(180deg,#fda4af,#ef4444);color:#3b0a0a}
     .row{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
@@ -65,10 +60,8 @@
     .toast.success{border-color:rgba(16,185,129,.45)}.toast.error{border-color:rgba(239,68,68,.45)}
     @keyframes pop{from{transform:translateY(6px);opacity:0}to{transform:none;opacity:1}}
     .section-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px}
-    select.format{
-      background:rgba(255,255,255,0.06);color:var(--text);border:1px solid rgba(255,255,255,0.18);
-      padding:8px 10px;border-radius:10px
-    }
+    select.format{background:rgba(255,255,255,0.06);color:var(--text);border:1px solid rgba(255,255,255,0.18);
+      padding:8px 10px;border-radius:10px}
     .pager{display:flex;align-items:center;gap:8px;margin-top:6px}
   </style>
 </head>
@@ -90,6 +83,8 @@
           <input id="p" type="password" value="admin123">
           <button id="btnLogin" class="btn primary">Login</button>
           <button id="btnLogout" class="btn secondary" disabled>Logout</button>
+          <a id="link-signup" href="javascript:void(0)" class="small muted" style="margin-left:8px">Sign up</a>
+          <a id="link-confirm" href="javascript:void(0)" class="small muted" style="margin-left:8px">Confirm</a>
         </div>
         <div class="row small">
           <span>Status:</span>
@@ -106,7 +101,6 @@
       <section class="card">
         <div class="section-head">
           <h2>2) Upload</h2>
-          <span class="small muted">Send a video to process</span>
         </div>
         <div class="row">
           <input id="file" type="file" accept="video/*" disabled />
@@ -200,28 +194,63 @@ function toast(msg,type="success",t=2500){const w=$("#toasts");const d=document.
 d.className=`toast ${type}`;d.textContent=msg;w.appendChild(d);setTimeout(()=>d.remove(),t)}
 function setAuthPill(text,kind){const p=$("#authState");p.className=`pill ${kind}`;
 p.innerHTML=`${kind==='warn'?'<span class="spinner"></span> ':''}${text}`}
-function toggleUI(on){$("#file").disabled=!on;$("#btnUpload").disabled=!on;$("#btnList").disabled=!on;
-$("#btnJobs").disabled=!on;$("#btnLogout").disabled=!on;$("#btnLogin").disabled=on;$("#btnTopup").disabled=!on;
-$("#autoJobs").disabled=!on;["filesQ","filesSort","filesOrder","filesSize","jobStatus","jobsSort","jobsOrder","jobsSize"].forEach(id=>{$("#"+id).disabled=!on});
-$("#tok").textContent=on?(token.slice(0,24)+'...'):'-';
-if(!on){setAuthPill('Not logged in','warn');$("#files").innerHTML='';$("#jobs").innerHTML='';clearInterval(jobsInterval);setBalance(0)}
-else{setAuthPill('Logged in','success');refreshMe();listFiles();listJobs();jobsInterval=setInterval(()=>token&&listJobs(),5000)}}
+function toggleUI(on){
+  $("#file").disabled=!on;$("#btnUpload").disabled=!on;$("#btnList").disabled=!on;
+  $("#btnJobs").disabled=!on;$("#btnLogout").disabled=!on;$("#btnLogin").disabled=on;$("#btnTopup").disabled=!on;
+  $("#autoJobs").disabled=!on;["filesQ","filesSort","filesOrder","filesSize","jobStatus","jobsSort","jobsOrder","jobsSize"].forEach(id=>{$("#"+id).disabled=!on});
+  $("#tok").textContent=on?(token.slice(0,24)+'...'):'-';
+  if(!on){
+    setAuthPill('Not logged in','warn');$("#files").innerHTML='';$("#jobs").innerHTML='';clearInterval(jobsInterval);setBalance(0)
+  }else{
+    setAuthPill('Logged in','success');refreshMe();listFiles();listJobs();
+    jobsInterval=setInterval(()=>token&&listJobs(),5000)
+  }
+}
 function authHeaders(){return token?{Authorization:'Bearer '+token}:{}} 
 async function guardFetch(url,opts={}){const r=await fetch(url,{...opts,headers:{...(opts.headers||{}),...authHeaders()}});
-if(r.status===401){token=null;toggleUI(false);throw new Error('Unauthorized')} return r}
+if(r.status===401){token=null;localStorage.removeItem("idToken");toggleUI(false);toast('Unauthorized','error');throw new Error('Unauthorized')} return r}
 function escapeHtml(s){return (s==null)?'':String(s).replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;').replaceAll("'",'&#39;')}
 function setBalance(cents){ $("#bal").textContent=(Number(cents||0)/100).toFixed(2); }
 function debounce(fn, delay=300){ let t; return (...args)=>{ clearTimeout(t); t=setTimeout(()=>fn(...args), delay); }; }
 
-// --- auth ---
+// --- signup / confirm ---
+async function signupFlow(){
+  const username=$("#u").value.trim(), password=$("#p").value;
+  const email = prompt("Enter your email for sign-up:");
+  if(!username||!password||!email){ toast('username/password/email required','error'); return; }
+  const r = await fetch(BASE+'/auth/signup',{method:'POST',headers:{'content-type':'application/json'},
+              body:JSON.stringify({username,password,email})});
+  const j = await r.json().catch(()=>null);
+  if(r.ok && (j?.ok!==false)){ toast('Sign up sent. Check your inbox (Spam).'); }
+  else { toast(`Sign up failed: ${j?.error||j?.message||r.status}`, 'error'); }
+}
+async function confirmFlow(){
+  const username=$("#u").value.trim();
+  const code = prompt("Enter the 6-digit confirmation code:");
+  if(!username||!code){ toast('username/code required','error'); return; }
+  const r = await fetch(BASE+'/auth/confirm',{method:'POST',headers:{'content-type':'application/json'},
+              body:JSON.stringify({username,code})});
+  const j = await r.json().catch(()=>null);
+  if(r.ok && (j?.ok!==false)){ toast('Email confirmed! You can login now.'); }
+  else { toast(`Confirm failed: ${j?.error||j?.message||r.status}`, 'error'); }
+}
+$("#link-signup")?.addEventListener("click", signupFlow);
+$("#link-confirm")?.addEventListener("click", confirmFlow);
+
+// --- login/logout ---
 $("#btnLogin").onclick = async ()=>{
   const r=await fetch(BASE+'/login',{method:'POST',headers:{'content-type':'application/json'},
     body:JSON.stringify({username:$("#u").value,password:$("#p").value})});
-  if(!r.ok){toast('Login failed','error');return;}
-  const j=await r.json(); token=j.authToken; if(!token){toast('Login failed','error');return;}
-  toggleUI(true); toast('Login successful');
+  const j=await r.json().catch(()=>null);
+  if(!r.ok||!j?.authToken){toast(`Login failed${j?.error?`: ${j.error}`:''}`,'error');return;}
+  token=j.authToken;
+  localStorage.setItem("idToken", token);
+  toggleUI(true);
+  toast('Login successful');
 };
-$("#btnLogout").onclick = ()=>{token=null;toggleUI(false);toast('Logged out')};
+$("#btnLogout").onclick = ()=>{
+  token=null; localStorage.removeItem("idToken"); toggleUI(false); toast('Logged out')
+};
 $("#btnTopup").onclick = async ()=>{
   const amt = parseInt($("#topupAmt").value,10);
   if(!Number.isInteger(amt)||amt<=0){ toast('Enter cents, e.g. 200','error'); return; }
@@ -298,7 +327,6 @@ async function listFiles(){
   box.querySelectorAll('.btnSubs').forEach(b=>b.onclick=subsFetch);
   box.querySelectorAll('.btnMeta').forEach(b=>b.onclick=showMeta);
 
-  // pager
   $("#filesPage").textContent=String(j?.page||filesPage);
   $("#filesTotal").textContent=`Total: ${total}`;
   const maxPage = Math.max(1, Math.ceil(total / size));
@@ -414,7 +442,6 @@ async function listJobs(){
   box.querySelectorAll('.btnLogs').forEach(b=>b.onclick=showLogs);
   box.querySelectorAll('.btnThumb').forEach(b=>b.onclick=showThumb);
 
-  // pager
   $("#jobsPage").textContent=String(j?.page||jobsPage);
   $("#jobsTotal").textContent=`Total: ${total}`;
   const maxPage = Math.max(1, Math.ceil(total / size));
@@ -442,7 +469,16 @@ async function downloadOutput(e){
   const a=document.createElement('a'); a.href=url; a.download=''; a.click(); URL.revokeObjectURL(url);
 }
 
-setInterval(()=>{ if(token) listJobs(); }, 5000);
+// --- Initial: Attempt to reuse the local token ---
+(function initAuthFromStorage(){
+  const saved = localStorage.getItem("idToken");
+  if (saved) {
+    token = saved;
+    toggleUI(true);
+  } else {
+    toggleUI(false);
+  }
+})();
 </script>
 </body>
 </html>

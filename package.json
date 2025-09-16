@@ -7,8 +7,11 @@
     "load": "node loadtest.js"
   },
   "dependencies": {
+    "@aws-sdk/client-cognito-identity-provider": "^3.888.0",
     "@ffmpeg-installer/ffmpeg": "^1.1.0",
     "@ffprobe-installer/ffprobe": "^2.1.2",
+    "aws-jwt-verify": "^5.1.0",
+    "bcryptjs": "^3.0.2",
     "better-sqlite3": "^11.10.0",
     "cors": "^2.8.5",
     "express": "^4.21.2",
