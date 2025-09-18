@@ -192,7 +192,6 @@ function fkExists(table, refTable) {
   }
 })();
 
-// 预置两个账户
 db.prepare(
   `INSERT INTO accounts(owner,balance_cents,updated_at)
    VALUES('admin',1000,datetime('now'))
@@ -296,14 +295,26 @@ async function auth(req, res, next) {
   try {
     const m = (req.headers.authorization || "").match(/^Bearer (.+)$/i);
     if (!m) return res.status(401).json({ ok: false, error: "missing token" });
+
     const payload = await idTokenVerifier.verify(m[1]);
-    const username = payload["cognito:username"] || payload["username"] || payload["email"] || payload.sub;
-    req.user = { sub: username, email: payload.email || null, jwt: m[1], admin: false };
-    next();
+    const rawName = payload["cognito:username"];
+    const username = typeof rawName === "string" ? rawName.trim() : "";
+    const isAdmin = (username.toLowerCase() === "admin");
+
+    req.user = {
+      sub: username || payload.sub || "",
+      email: payload.email || null,
+      jwt: m[1],
+      admin: isAdmin,
+    };
+
+    return next();
   } catch (e) {
+    console.error("Auth verify error:", e);
     return res.status(401).json({ ok: false, error: "invalid token", detail: e.message });
   }
 }
+
 
 // ----- helpers -----
 const upload = multer({ dest: os.tmpdir() });
@@ -324,11 +335,12 @@ app.get("/me", auth, (req, res) => {
   ).get(req.user.sub);
   res.json({
     user: req.user.sub,
-    admin: !!req.user.admin,
+    admin: !!req.user.admin,   // ensure this is present
     balance_cents: a?.balance_cents ?? 0,
     updated_at: a?.updated_at ?? null,
   });
 });
+
 
 app.post("/accounts/topup", auth, (req, res) => {
   const amount = Number(req.body?.amount_cents ?? 0);
@@ -452,6 +464,47 @@ app.delete("/files/:id", auth, (req, res) => {
   try { fs.unlinkSync(row.stored_path); } catch (e) { log("unlink warn:", e.message); }
   res.json({ ok: true });
 });
+
+
+
+
+
+// ----- admin: list all users' files -----
+app.get("/admin/files", auth, (req, res) => {
+  if (!req.user?.admin) return res.status(403).json({ ok: false, error: "forbidden" });
+
+  const { page, size, offset, q, sort, order } = listParams(req, {
+    sortWhitelist: ["uploaded_at", "size_bytes", "filename", "owner"],
+    defaultSort: "uploaded_at",
+  });
+
+  const where = [];
+  const params = [];
+  if (q) {
+    // search in filename OR owner
+    where.push("(filename LIKE ? OR owner LIKE ?)");
+    params.push(`%${q}%`, `%${q}%`);
+  }
+  const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
+
+  const total = db.prepare(`SELECT COUNT(*) c FROM files ${whereSql}`).get(...params).c;
+  const rows = db.prepare(
+    `SELECT id, owner, filename, size_bytes, mime, uploaded_at
+     FROM files ${whereSql}
+     ORDER BY ${sort} ${order} LIMIT ? OFFSET ?`
+  ).all(...params, size, offset);
+
+  res.set("X-Total-Count", String(total));
+  res.set("X-Page", String(page));
+  res.set("X-Page-Size", String(size));
+  res.json({ items: rows, total, page, size, sort, order, q });
+});
+
+
+
+
+
+
 
 app.get("/download/original/:fileId", auth, (req, res) => {
   const row = db.prepare(
@@ -631,5 +684,4 @@ app.get("/outputs", auth, (_req, res) => {
 // ----- start -----
 app.listen(PORT, () => {
   log(`Server listening on http://localhost:${PORT}`);
-  log(`DATA_DIR: ${DATA_DIR}`);
 });
