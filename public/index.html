@@ -140,6 +140,38 @@
       </div>
     </section>
 
+    <!-- 3A) All users' files (admin only) -->
+<section class="card" id="adminSection" style="display:none;">
+  <div class="section-head">
+    <h2>3A) All users' files (admin)</h2>
+    <div class="actions">
+      <input id="adminFilesQ" type="text" placeholder="Search filename or owner..." style="min-width:200px">
+      <select id="adminFilesSort">
+        <option value="uploaded_at">Uploaded time</option>
+        <option value="size_bytes">Size</option>
+        <option value="filename">Filename</option>
+        <option value="owner">Owner</option>
+      </select>
+      <select id="adminFilesOrder">
+        <option value="desc">Desc</option>
+        <option value="asc">Asc</option>
+      </select>
+      <select id="adminFilesSize">
+        <option value="5">5</option><option value="10" selected>10</option><option value="20">20</option>
+      </select>
+      <button id="btnAdminList" class="btn secondary" disabled>Refresh</button>
+    </div>
+  </div>
+  <div id="adminFiles" class="list"></div>
+  <div class="pager">
+    <button id="adminFilesPrev" class="btn secondary" disabled>Prev</button>
+    <span class="small">Page <b id="adminFilesPage">1</b></span>
+    <button id="adminFilesNext" class="btn secondary" disabled>Next</button>
+    <span class="small" id="adminFilesTotal" style="opacity:.7"></span>
+  </div>
+</section>
+
+
     <!-- 4) Jobs -->
     <section class="card">
       <div class="section-head">
@@ -188,24 +220,46 @@
 const BASE = location.origin;
 let token = null, jobsInterval = null;
 let filesPage=1, jobsPage=1;
+let isAdmin = false, adminFilesPage = 1;
+
 
 const $ = (q)=>document.querySelector(q);
 function toast(msg,type="success",t=2500){const w=$("#toasts");const d=document.createElement("div");
 d.className=`toast ${type}`;d.textContent=msg;w.appendChild(d);setTimeout(()=>d.remove(),t)}
 function setAuthPill(text,kind){const p=$("#authState");p.className=`pill ${kind}`;
 p.innerHTML=`${kind==='warn'?'<span class="spinner"></span> ':''}${text}`}
+
 function toggleUI(on){
-  $("#file").disabled=!on;$("#btnUpload").disabled=!on;$("#btnList").disabled=!on;
-  $("#btnJobs").disabled=!on;$("#btnLogout").disabled=!on;$("#btnLogin").disabled=on;$("#btnTopup").disabled=!on;
-  $("#autoJobs").disabled=!on;["filesQ","filesSort","filesOrder","filesSize","jobStatus","jobsSort","jobsOrder","jobsSize"].forEach(id=>{$("#"+id).disabled=!on});
+  $("#file").disabled=!on; $("#btnUpload").disabled=!on; $("#btnList").disabled=!on;
+  $("#btnJobs").disabled=!on; $("#btnLogout").disabled=!on; $("#btnLogin").disabled=on; $("#btnTopup").disabled=!on;
+  $("#autoJobs").disabled=!on;
+  ["filesQ","filesSort","filesOrder","filesSize","jobStatus","jobsSort","jobsOrder","jobsSize"].forEach(id=>{
+    $("#"+id).disabled=!on
+  });
+
+  // admin controls (enable/disable; the section visibility is handled after /me)
+  ["adminFilesQ","adminFilesSort","adminFilesOrder","adminFilesSize"].forEach(id=>{
+    const el = $("#"+id); if (el) el.disabled=!on;
+  });
+  const btnAdminList = $("#btnAdminList"); if (btnAdminList) btnAdminList.disabled=!on;
+
   $("#tok").textContent=on?(token.slice(0,24)+'...'):'-';
+
   if(!on){
-    setAuthPill('Not logged in','warn');$("#files").innerHTML='';$("#jobs").innerHTML='';clearInterval(jobsInterval);setBalance(0)
+    setAuthPill('Not logged in','warn');
+    $("#files").innerHTML=''; $("#jobs").innerHTML='';
+    clearInterval(jobsInterval); setBalance(0);
+    isAdmin = false;
+    const sec = $("#adminSection"); if (sec) sec.style.display = "none";
   }else{
-    setAuthPill('Logged in','success');refreshMe();listFiles();listJobs();
+    setAuthPill('Logged in','success');
+    refreshMe();    // this will decide whether to show admin section
+    listFiles(); listJobs();
     jobsInterval=setInterval(()=>token&&listJobs(),5000)
   }
 }
+
+
 function authHeaders(){return token?{Authorization:'Bearer '+token}:{}} 
 async function guardFetch(url,opts={}){const r=await fetch(url,{...opts,headers:{...(opts.headers||{}),...authHeaders()}});
 if(r.status===401){token=null;localStorage.removeItem("idToken");toggleUI(false);toast('Unauthorized','error');throw new Error('Unauthorized')} return r}
@@ -258,10 +312,27 @@ $("#btnTopup").onclick = async ()=>{
   if(!r.ok){ toast('Top up failed','error'); return; }
   toast('Top up success'); refreshMe();
 };
+
+
 async function refreshMe(){
-  const r=await guardFetch(BASE+'/me'); const j=await r.json().catch(()=>null);
+  const r = await guardFetch(BASE+'/me');
+  const j = await r.json().catch(()=>null);
   setBalance(j?.balance_cents||0);
+
+  isAdmin = !!j?.admin;
+  const sec = $("#adminSection");
+  if (sec) sec.style.display = isAdmin ? "block" : "none";
+
+  // Enable the “Refresh” button only for admins
+  const btnAdminList = $("#btnAdminList");
+  if (btnAdminList) btnAdminList.disabled = !isAdmin;
+
+  if (isAdmin) {
+    adminFilesPage = 1;
+    listAdminFiles();
+  }
 }
+
 
 // --- upload ---
 $("#btnUpload").onclick = async ()=>{
@@ -281,6 +352,61 @@ $("#filesQ").oninput = debounce(()=>{ filesPage=1; listFiles(); }, 300);
 $("#filesSort").onchange = ()=>{ filesPage=1; listFiles(); };
 $("#filesOrder").onchange = ()=>{ filesPage=1; listFiles(); };
 $("#filesSize").onchange = ()=>{ filesPage=1; listFiles(); };
+
+// --- Admin: list all users' files ---
+$("#btnAdminList")?.addEventListener("click", ()=>{ adminFilesPage=1; listAdminFiles(); });
+$("#adminFilesPrev")?.addEventListener("click", ()=>{ if(adminFilesPage>1){ adminFilesPage--; listAdminFiles(); }});
+$("#adminFilesNext")?.addEventListener("click", ()=>{ adminFilesPage++; listAdminFiles(); });
+
+const adminDebouncedSearch = debounce(()=>{ adminFilesPage=1; listAdminFiles(); }, 300);
+$("#adminFilesQ")?.addEventListener("input", adminDebouncedSearch);
+$("#adminFilesSort")?.addEventListener("change", ()=>{ adminFilesPage=1; listAdminFiles(); });
+$("#adminFilesOrder")?.addEventListener("change", ()=>{ adminFilesPage=1; listAdminFiles(); });
+$("#adminFilesSize")?.addEventListener("change", ()=>{ adminFilesPage=1; listAdminFiles(); });
+
+async function listAdminFiles(){
+  if(!isAdmin) return; // safety
+
+  const q = encodeURIComponent($("#adminFilesQ")?.value || "");
+  const sort = $("#adminFilesSort")?.value || "uploaded_at";
+  const order = $("#adminFilesOrder")?.value || "desc";
+  const size = parseInt($("#adminFilesSize")?.value,10) || 10;
+
+  const r = await guardFetch(`${BASE}/admin/files?page=${adminFilesPage}&size=${size}&q=${q}&sort=${sort}&order=${order}`);
+  const j = await r.json().catch(()=>null);
+
+  const total = j?.total || 0;
+  const box = $("#adminFiles");
+  if (!box) return;
+  box.innerHTML = "";
+  const items = j?.items || [];
+  if (!items.length) { box.innerHTML = '<div class="empty">No files found.</div>'; return; }
+
+  items.forEach(it=>{
+    const el = document.createElement('div'); el.className='item';
+    el.innerHTML=`
+      <div class="item-head">
+        <div class="item-title">${escapeHtml(it.filename)}</div>
+        <div class="actions">
+          <!-- read-only admin view for now -->
+          <span class="pill">${Number(it.size_bytes||0)} bytes</span>
+        </div>
+      </div>
+      <div class="small muted">
+        id: <code>${escapeHtml(it.id)}</code>
+        <span class="sep">•</span> owner: <b>${escapeHtml(it.owner)}</b>
+        <span class="sep">•</span> uploaded: ${escapeHtml(it.uploaded_at||'-')}
+      </div>`;
+    box.appendChild(el);
+  });
+
+  $("#adminFilesPage").textContent = String(j?.page || adminFilesPage);
+  $("#adminFilesTotal").textContent = `Total: ${total}`;
+  const maxPage = Math.max(1, Math.ceil(total / size));
+  $("#adminFilesPrev").disabled = (adminFilesPage<=1);
+  $("#adminFilesNext").disabled = (adminFilesPage>=maxPage);
+}
+
 
 async function listFiles(){
   const q = encodeURIComponent($("#filesQ").value||"");
