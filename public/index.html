@@ -334,13 +334,31 @@ async function listFiles(){
   $("#filesNext").disabled = (filesPage>=maxPage);
 }
 
-async function downloadOriginal(e){
-  const id=e.currentTarget.dataset.id;
-  const r=await guardFetch(BASE+'/download/original/'+encodeURIComponent(id));
-  if(!r.ok){toast('Download failed','error');return;}
-  const blob=await r.blob(); const url=URL.createObjectURL(blob);
-  const a=document.createElement('a'); a.href=url; a.download=''; a.click(); URL.revokeObjectURL(url);
+
+async function downloadOriginal(e) {
+  const id = e.currentTarget.dataset.id;
+  
+  const r = await guardFetch(BASE + '/download/original/' + encodeURIComponent(id));
+  if (!r.ok) { toast('Download failed', 'error'); return; }
+  
+  const data = await r.json();           // 解析 JSON
+  const url = data.downloadUrl;          // 拿到 pre-signed URL
+
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = '';                        // S3 的 Content-Disposition 會保留原始檔名
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
 }
+
+// async function downloadOriginal(e){
+//   const id=e.currentTarget.dataset.id;
+//   const r=await guardFetch(BASE+'/download/original/'+encodeURIComponent(id));
+//   if(!r.ok){toast('Download failed','error');return;}
+//   const blob=await r.blob(); const url=URL.createObjectURL(blob);
+//   const a=document.createElement('a'); a.href=url; a.download=''; a.click(); URL.revokeObjectURL(url);
+// }
 
 // --- Subs / Meta ---
 async function subsFetch(e){
@@ -465,8 +483,17 @@ async function downloadOutput(e){
   const r=await guardFetch(BASE+'/download/transcoded/'+encodeURIComponent(jobId));
   if(r.status===409){ toast('Output not ready yet','error'); return; }
   if(!r.ok){ toast('Download failed','error'); return; }
-  const blob=await r.blob(); const url=URL.createObjectURL(blob);
-  const a=document.createElement('a'); a.href=url; a.download=''; a.click(); URL.revokeObjectURL(url);
+    
+  const data = await r.json();           // 解析 JSON
+  const url = data.downloadUrl;          // 拿到 pre-signed URL
+
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = '';                        // S3 的 Content-Disposition 會保留原始檔名
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+
 }
 
 // --- Initial: Attempt to reuse the local token ---
