@@ -9,6 +9,7 @@ import fs from "fs";
 import path from "path";
 import os from "os";
 import { fileURLToPath } from "url";
+import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
 
 // === Cognito ===
 import {
@@ -57,6 +58,8 @@ const cogClient = new CognitoIdentityProviderClient({ region: COG_REGION });
 
 const hasSecret = !!COG_CLIENT_SECRET;
 
+
+
 // HMAC
 function makeSecretHash(username) {
   if (!hasSecret) return null;
@@ -71,6 +74,8 @@ const idTokenVerifier = CognitoJwtVerifier.create({
   clientId: COG_CLIENT_ID,
   tokenUse: "id",
 });
+
+
 
 // ----- data dirs -----
 function safeDir(preferred) {
@@ -305,8 +310,33 @@ async function auth(req, res, next) {
   }
 }
 
+// ======================================new Added section=====================================
+//  ===  Set up storage for files === 
+//  ===  S3 client === 
+const s3 = new S3Client({ region: process.env.AWS_REGION });
+const BUCKET = process.env.AWS_S3_BUCKET;
+
+// Multer 記憶體存放
+// ----- Multer DiskStorage -----
+const tmpDir = path.join(process.cwd(), "uploads");
+
+// 確保資料夾存在
+if (!fs.existsSync(tmpDir)) {
+  fs.mkdirSync(tmpDir, { recursive: true });
+}
+// const tmpDir = path.join(os.tmpdir(), "uploads");
+// fs.mkdirSync(tmpDir, { recursive: true });
+
+const storage = multer.diskStorage({
+  destination: (_req, _file, cb) => cb(null, tmpDir),
+  filename: (_req, file, cb) => cb(null, `${Date.now()}-${file.originalname}`)
+});
+// ======================================new Added section=====================================
+
+const upload = multer({ storage });
 // ----- helpers -----
-const upload = multer({ dest: os.tmpdir() });
+
+
 function listParams(req, opt) {
   const page = Math.max(1, parseInt(req.query.page || "1", 10));
   const size = Math.min(100, Math.max(1, parseInt(req.query.size || "10", 10)));
@@ -316,6 +346,7 @@ function listParams(req, opt) {
   const offset = (page - 1) * size;
   return { page, size, offset, q, sort, order };
 }
+
 
 // ----- account -----
 app.get("/me", auth, (req, res) => {
@@ -345,31 +376,43 @@ app.post("/accounts/topup", auth, (req, res) => {
 });
 
 // ----- files -----
-app.post("/upload", auth, upload.single("file"), (req, res) => {
+app.post("/upload", auth, upload.single("file"), async (req, res) => {
   if (!req.file) return res.status(400).json({ ok: false, error: "no file" });
   const id = uuidv4();
   const original = req.file.originalname || "upload.bin";
   const safeName = `${id}-${original.replace(/[^\w.\-]+/g, "_")}`;
-  const finalPath = path.join(UP_DIR, safeName);
 
-  try {
-    fs.renameSync(req.file.path, finalPath);
-  } catch (e) {
+// ======================================new Added section=====================================
+  const username = req.user.sub;
+  const s3Key = `${username}/${safeName}`;
+  const fileStream = fs.createReadStream(req.file.path);
+  console.log("Temp file path:", req.file.path);
+    try {
+    // 上傳到 S3
+    const command = new PutObjectCommand({
+      Bucket: BUCKET,
+      Key: s3Key,
+      Body: fileStream,
+      ContentType: req.file.mimetype,
+    });
+    await s3.send(command);
+
+    // 上傳完成，刪掉本地暫存
     try { fs.unlinkSync(req.file.path); } catch {}
-    return res.status(500).json({ ok: false, error: "rename failed: " + e.message });
-  }
 
-  try {
+        // 存資料庫
     db.prepare(
       `INSERT INTO files (id,owner,filename,stored_path,size_bytes,mime,uploaded_at)
        VALUES (?,?,?,?,?,?,datetime('now'))`
-    ).run(id, req.user.sub, original, finalPath, req.file.size, req.file.mimetype || null);
-    res.json({ ok: true, fileId: id, filename: original });
+    ).run(id, username, original, s3Key, req.file.size, req.file.mimetype || null);
+
+    res.json({ ok: true, fileId: id, filename: original, s3Key });
   } catch (e) {
-    try { fs.unlinkSync(finalPath); } catch {}
-    res.status(500).json({ ok: false, error: "db insert failed: " + e.message });
+    console.error("Upload failed:", e);
+    res.status(500).json({ ok: false, error: "upload failed: " + e.message });
   }
 });
+// ======================================new Added section=====================================
 
 app.get("/files", auth, (req, res) => {
   const { page, size, offset, q, sort, order } = listParams(req, {
