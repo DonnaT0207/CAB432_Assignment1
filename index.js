@@ -9,7 +9,8 @@ import fs from "fs";
 import path from "path";
 import os from "os";
 import { fileURLToPath } from "url";
-import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
+import { S3Client, PutObjectCommand, GetObjectCommand } from "@aws-sdk/client-s3";
+
 
 // === Cognito ===
 import {
@@ -35,7 +36,10 @@ if (fs.existsSync(envPath)) {
     if (!m) continue;
     const k = m[1];
     let v = m[2];
-    if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) {
+    if (
+      (v.startsWith('"') && v.endsWith('"')) ||
+      (v.startsWith("'") && v.endsWith("'"))
+    ) {
       v = v.slice(1, -1);
     }
     if (process.env[k] === undefined) process.env[k] = v;
@@ -49,16 +53,14 @@ ffmpeg.setFfmpegPath(ffmpegInstaller.path);
 const log = (...a) => console.log(new Date().toISOString(), ...a);
 
 // === Cognito config from env ===
-const COG_REGION        = process.env.COGNITO_REGION || "ap-southeast-2";
-const COG_USER_POOL_ID  = process.env.COGNITO_USER_POOL_ID || "";
-const COG_CLIENT_ID     = process.env.COGNITO_CLIENT_ID || "";
+const COG_REGION = process.env.COGNITO_REGION || "ap-southeast-2";
+const COG_USER_POOL_ID = process.env.COGNITO_USER_POOL_ID || "";
+const COG_CLIENT_ID = process.env.COGNITO_CLIENT_ID || "";
 const COG_CLIENT_SECRET = process.env.COGNITO_CLIENT_SECRET || "";
 
 const cogClient = new CognitoIdentityProviderClient({ region: COG_REGION });
 
 const hasSecret = !!COG_CLIENT_SECRET;
-
-
 
 // HMAC
 function makeSecretHash(username) {
@@ -74,8 +76,6 @@ const idTokenVerifier = CognitoJwtVerifier.create({
   clientId: COG_CLIENT_ID,
   tokenUse: "id",
 });
-
-
 
 // ----- data dirs -----
 function safeDir(preferred) {
@@ -93,7 +93,8 @@ const DATA_DIR = safeDir(path.join(process.cwd(), "data"));
 const UP_DIR = path.join(DATA_DIR, "uploads");
 const OUT_DIR = path.join(DATA_DIR, "outputs");
 const THUMB_DIR = path.join(OUT_DIR, "thumbs");
-for (const d of [UP_DIR, OUT_DIR, THUMB_DIR]) fs.mkdirSync(d, { recursive: true });
+for (const d of [UP_DIR, OUT_DIR, THUMB_DIR])
+  fs.mkdirSync(d, { recursive: true });
 
 // ----- database -----
 const DB_FILE = path.join(DATA_DIR, "app.db");
@@ -142,15 +143,22 @@ CREATE INDEX IF NOT EXISTS idx_jobs_updated_at ON jobs(updated_at);
 `);
 
 function columnExists(table, col) {
-  return db.prepare(`PRAGMA table_info(${table})`).all().some(c => c.name === col);
+  return db
+    .prepare(`PRAGMA table_info(${table})`)
+    .all()
+    .some((c) => c.name === col);
 }
 function fkExists(table, refTable) {
-  return db.prepare(`PRAGMA foreign_key_list(${table})`).all().some(r => r.table === refTable);
+  return db
+    .prepare(`PRAGMA foreign_key_list(${table})`)
+    .all()
+    .some((r) => r.table === refTable);
 }
 
 // minimal migrations
 (function migrate() {
-  if (!columnExists("files", "ext_meta")) db.exec(`ALTER TABLE files ADD COLUMN ext_meta TEXT;`);
+  if (!columnExists("files", "ext_meta"))
+    db.exec(`ALTER TABLE files ADD COLUMN ext_meta TEXT;`);
   for (const c of [
     ["thumbnail_path", "TEXT"],
     ["thumbnail_name", "TEXT"],
@@ -161,7 +169,8 @@ function fkExists(table, refTable) {
     ["output_path", "TEXT"],
     ["output_name", "TEXT"],
   ]) {
-    if (!columnExists("jobs", c[0])) db.exec(`ALTER TABLE jobs ADD COLUMN ${c[0]} ${c[1]};`);
+    if (!columnExists("jobs", c[0]))
+      db.exec(`ALTER TABLE jobs ADD COLUMN ${c[0]} ${c[1]};`);
   }
   if (!fkExists("jobs", "files")) {
     db.exec("PRAGMA foreign_keys=OFF;");
@@ -220,7 +229,9 @@ app.get("/healthz", (_req, res) => res.json({ ok: true }));
 app.post("/auth/signup", async (req, res) => {
   const { username, password, email } = req.body || {};
   if (!username || !password || !email) {
-    return res.status(400).json({ ok: false, error: "username, password, email required" });
+    return res
+      .status(400)
+      .json({ ok: false, error: "username, password, email required" });
   }
   try {
     const params = {
@@ -234,14 +245,18 @@ app.post("/auth/signup", async (req, res) => {
     const out = await cogClient.send(new SignUpCommand(params));
     res.json({ ok: true, codeDelivery: out.CodeDeliveryDetails || null });
   } catch (e) {
-    res.status(400).json({ ok: false, error: e.name || "SignUpError", message: e.message });
+    res
+      .status(400)
+      .json({ ok: false, error: e.name || "SignUpError", message: e.message });
   }
 });
 
 app.post("/auth/confirm", async (req, res) => {
   const { username, code } = req.body || {};
   if (!username || !code) {
-    return res.status(400).json({ ok: false, error: "username, code required" });
+    return res
+      .status(400)
+      .json({ ok: false, error: "username, code required" });
   }
   try {
     const params = {
@@ -254,14 +269,18 @@ app.post("/auth/confirm", async (req, res) => {
     await cogClient.send(new ConfirmSignUpCommand(params));
     res.json({ ok: true });
   } catch (e) {
-    res.status(400).json({ ok: false, error: e.name || "ConfirmError", message: e.message });
+    res
+      .status(400)
+      .json({ ok: false, error: e.name || "ConfirmError", message: e.message });
   }
 });
 
 app.post("/login", async (req, res) => {
   const { username, password } = req.body || {};
   if (!username || !password)
-    return res.status(400).json({ ok: false, error: "username, password required" });
+    return res
+      .status(400)
+      .json({ ok: false, error: "username, password required" });
 
   try {
     const authParams = {
@@ -271,11 +290,13 @@ app.post("/login", async (req, res) => {
     const sh = makeSecretHash(username);
     if (sh) authParams.SECRET_HASH = sh;
 
-    const out = await cogClient.send(new InitiateAuthCommand({
-      AuthFlow: "USER_PASSWORD_AUTH",
-      ClientId: COG_CLIENT_ID,
-      AuthParameters: authParams,
-    }));
+    const out = await cogClient.send(
+      new InitiateAuthCommand({
+        AuthFlow: "USER_PASSWORD_AUTH",
+        ClientId: COG_CLIENT_ID,
+        AuthParameters: authParams,
+      })
+    );
 
     const idToken = out?.AuthenticationResult?.IdToken;
     if (!idToken) return res.status(401).json({ ok: false, error: "no token" });
@@ -287,11 +308,13 @@ app.post("/login", async (req, res) => {
 
     res.json({ ok: true, authToken: idToken });
   } catch (e) {
-    res.status(401).json({ ok: false, error: e.name || "AuthError", message: e.message });
+    res
+      .status(401)
+      .json({ ok: false, error: e.name || "AuthError", message: e.message });
   }
 });
 
-// whoami：convenient for you to test whether Bearer token is included 
+// whoami：convenient for you to test whether Bearer token is included
 app.get("/auth/whoami", auth, (req, res) => {
   res.json({ ok: true, user: req.user });
 });
@@ -302,17 +325,28 @@ async function auth(req, res, next) {
     const m = (req.headers.authorization || "").match(/^Bearer (.+)$/i);
     if (!m) return res.status(401).json({ ok: false, error: "missing token" });
     const payload = await idTokenVerifier.verify(m[1]);
-    const username = payload["cognito:username"] || payload["username"] || payload["email"] || payload.sub;
-    req.user = { sub: username, email: payload.email || null, jwt: m[1], admin: false };
+    const username =
+      payload["cognito:username"] ||
+      payload["username"] ||
+      payload["email"] ||
+      payload.sub;
+    req.user = {
+      sub: username,
+      email: payload.email || null,
+      jwt: m[1],
+      admin: false,
+    };
     next();
   } catch (e) {
-    return res.status(401).json({ ok: false, error: "invalid token", detail: e.message });
+    return res
+      .status(401)
+      .json({ ok: false, error: "invalid token", detail: e.message });
   }
 }
 
 // ======================================new Added section=====================================
-//  ===  Set up storage for files === 
-//  ===  S3 client === 
+//  ===  Set up storage for files ===
+//  ===  S3 client ===
 const s3 = new S3Client({ region: process.env.AWS_REGION });
 const BUCKET = process.env.AWS_S3_BUCKET;
 
@@ -329,30 +363,31 @@ if (!fs.existsSync(tmpDir)) {
 
 const storage = multer.diskStorage({
   destination: (_req, _file, cb) => cb(null, tmpDir),
-  filename: (_req, file, cb) => cb(null, `${Date.now()}-${file.originalname}`)
+  filename: (_req, file, cb) => cb(null, `${Date.now()}-${file.originalname}`),
 });
 // ======================================new Added section=====================================
 
 const upload = multer({ storage });
 // ----- helpers -----
 
-
 function listParams(req, opt) {
   const page = Math.max(1, parseInt(req.query.page || "1", 10));
   const size = Math.min(100, Math.max(1, parseInt(req.query.size || "10", 10)));
   const q = (req.query.q || "").trim();
-  const sort = opt.sortWhitelist.includes(req.query.sort) ? req.query.sort : opt.defaultSort;
-  const order = (req.query.order || "desc").toLowerCase() === "asc" ? "asc" : "desc";
+  const sort = opt.sortWhitelist.includes(req.query.sort)
+    ? req.query.sort
+    : opt.defaultSort;
+  const order =
+    (req.query.order || "desc").toLowerCase() === "asc" ? "asc" : "desc";
   const offset = (page - 1) * size;
   return { page, size, offset, q, sort, order };
 }
 
-
 // ----- account -----
 app.get("/me", auth, (req, res) => {
-  const a = db.prepare(
-    `SELECT balance_cents, updated_at FROM accounts WHERE owner=?`
-  ).get(req.user.sub);
+  const a = db
+    .prepare(`SELECT balance_cents, updated_at FROM accounts WHERE owner=?`)
+    .get(req.user.sub);
   res.json({
     user: req.user.sub,
     admin: !!req.user.admin,
@@ -382,12 +417,12 @@ app.post("/upload", auth, upload.single("file"), async (req, res) => {
   const original = req.file.originalname || "upload.bin";
   const safeName = `${id}-${original.replace(/[^\w.\-]+/g, "_")}`;
 
-// ======================================new Added section=====================================
+  // ======================================new Added section=====================================
   const username = req.user.sub;
-  const s3Key = `${username}/${safeName}`;
+  const s3Key = `${username}/uploaded/${safeName}`;
   const fileStream = fs.createReadStream(req.file.path);
   console.log("Temp file path:", req.file.path);
-    try {
+  try {
     // 上傳到 S3
     const command = new PutObjectCommand({
       Bucket: BUCKET,
@@ -398,13 +433,22 @@ app.post("/upload", auth, upload.single("file"), async (req, res) => {
     await s3.send(command);
 
     // 上傳完成，刪掉本地暫存
-    try { fs.unlinkSync(req.file.path); } catch {}
+    try {
+      fs.unlinkSync(req.file.path);
+    } catch {}
 
-        // 存資料庫
+    // 存資料庫
     db.prepare(
       `INSERT INTO files (id,owner,filename,stored_path,size_bytes,mime,uploaded_at)
        VALUES (?,?,?,?,?,?,datetime('now'))`
-    ).run(id, username, original, s3Key, req.file.size, req.file.mimetype || null);
+    ).run(
+      id,
+      username,
+      original,
+      s3Key,
+      req.file.size,
+      req.file.mimetype || null
+    );
 
     res.json({ ok: true, fileId: id, filename: original, s3Key });
   } catch (e) {
@@ -426,12 +470,16 @@ app.get("/files", auth, (req, res) => {
     params.push(`%${q}%`);
   }
   const whereSql = `WHERE ${where.join(" AND ")}`;
-  const total = db.prepare(`SELECT COUNT(*) c FROM files ${whereSql}`).get(...params).c;
-  const rows = db.prepare(
-    `SELECT id,filename,size_bytes,mime,uploaded_at
+  const total = db
+    .prepare(`SELECT COUNT(*) c FROM files ${whereSql}`)
+    .get(...params).c;
+  const rows = db
+    .prepare(
+      `SELECT id,filename,size_bytes,mime,uploaded_at
      FROM files ${whereSql}
      ORDER BY ${sort} ${order} LIMIT ? OFFSET ?`
-  ).all(...params, size, offset);
+    )
+    .all(...params, size, offset);
   res.set("X-Total-Count", String(total));
   res.set("X-Page", String(page));
   res.set("X-Page-Size", String(size));
@@ -439,40 +487,60 @@ app.get("/files", auth, (req, res) => {
 });
 
 app.get("/files/:id/meta", auth, (req, res) => {
-  const row = db.prepare(
-    `SELECT ext_meta FROM files WHERE id=? AND owner=?`
-  ).get(req.params.id, req.user.sub);
+  const row = db
+    .prepare(`SELECT ext_meta FROM files WHERE id=? AND owner=?`)
+    .get(req.params.id, req.user.sub);
   if (!row) return res.sendStatus(404);
   let meta = null;
-  try { meta = row.ext_meta ? JSON.parse(row.ext_meta) : null; } catch {}
+  try {
+    meta = row.ext_meta ? JSON.parse(row.ext_meta) : null;
+  } catch {}
   res.json({ ok: true, meta });
 });
 
 // OpenSubtitles metadata
 app.post("/files/:id/subs", auth, async (req, res) => {
   if (!OPENSUBTITLES_API_KEY)
-    return res.status(400).json({ ok: false, error: "OPENSUBTITLES_API_KEY missing" });
+    return res
+      .status(400)
+      .json({ ok: false, error: "OPENSUBTITLES_API_KEY missing" });
 
-  const f = db.prepare(`SELECT id FROM files WHERE id=? AND owner=?`)
+  const f = db
+    .prepare(`SELECT id FROM files WHERE id=? AND owner=?`)
     .get(req.params.id, req.user.sub);
   if (!f) return res.sendStatus(404);
 
   const query = String(req.body?.query || "").trim();
-  const languages = Array.isArray(req.body?.languages) ? req.body.languages : ["en"];
-  if (!query) return res.status(400).json({ ok: false, error: "query required" });
+  const languages = Array.isArray(req.body?.languages)
+    ? req.body.languages
+    : ["en"];
+  if (!query)
+    return res.status(400).json({ ok: false, error: "query required" });
 
   try {
     const url =
       `https://api.opensubtitles.com/api/v1/subtitles?` +
-      `query=${encodeURIComponent(query)}&languages=${encodeURIComponent(languages.join(","))}` +
+      `query=${encodeURIComponent(query)}&languages=${encodeURIComponent(
+        languages.join(",")
+      )}` +
       `&order_by=downloads&order_direction=desc&ai_translated=exclude`;
     const r = await fetch(url, {
       headers: { "Api-Key": OPENSUBTITLES_API_KEY, Accept: "application/json" },
     });
-    if (!r.ok) return res.status(502).json({ ok: false, error: `OpenSubtitles HTTP ${r.status}` });
+    if (!r.ok)
+      return res
+        .status(502)
+        .json({ ok: false, error: `OpenSubtitles HTTP ${r.status}` });
     const j = await r.json();
     const top = Array.isArray(j?.data) ? j.data.slice(0, 5) : [];
-    const payload = { opensubtitles: { query, languages, total: j?.total_count ?? top.length, top } };
+    const payload = {
+      opensubtitles: {
+        query,
+        languages,
+        total: j?.total_count ?? top.length,
+        top,
+      },
+    };
     db.prepare(
       `UPDATE files
        SET ext_meta=json_patch(COALESCE(ext_meta,'{}'), json(?))
@@ -485,34 +553,45 @@ app.post("/files/:id/subs", auth, async (req, res) => {
 });
 
 app.delete("/files/:id", auth, (req, res) => {
-  const row = db.prepare(
-    `SELECT stored_path FROM files WHERE id=? AND owner=?`
-  ).get(req.params.id, req.user.sub);
+  const row = db
+    .prepare(`SELECT stored_path FROM files WHERE id=? AND owner=?`)
+    .get(req.params.id, req.user.sub);
   if (!row) return res.sendStatus(404);
-  const r = db.prepare(`DELETE FROM files WHERE id=? AND owner=?`)
+  const r = db
+    .prepare(`DELETE FROM files WHERE id=? AND owner=?`)
     .run(req.params.id, req.user.sub);
-  if (r.changes !== 1) return res.status(500).json({ ok: false, error: "delete failed" });
-  try { fs.unlinkSync(row.stored_path); } catch (e) { log("unlink warn:", e.message); }
+  if (r.changes !== 1)
+    return res.status(500).json({ ok: false, error: "delete failed" });
+  try {
+    fs.unlinkSync(row.stored_path);
+  } catch (e) {
+    log("unlink warn:", e.message);
+  }
   res.json({ ok: true });
 });
 
 app.get("/download/original/:fileId", auth, (req, res) => {
-  const row = db.prepare(
-    `SELECT stored_path,filename FROM files WHERE id=? AND owner=?`
-  ).get(req.params.fileId, req.user.sub);
+  const row = db
+    .prepare(`SELECT stored_path,filename FROM files WHERE id=? AND owner=?`)
+    .get(req.params.fileId, req.user.sub);
   if (!row || !fs.existsSync(row.stored_path)) return res.sendStatus(404);
-  res.setHeader("Content-Disposition", `attachment; filename="${path.basename(row.filename)}"`);
+  res.setHeader(
+    "Content-Disposition",
+    `attachment; filename="${path.basename(row.filename)}"`
+  );
   res.sendFile(row.stored_path);
 });
 
 // ----- jobs -----
 const TRANSCODE_COST_CENTS = 50;
 const createJobWithCharge = db.transaction((owner, fileId, cents, params) => {
-  const u = db.prepare(
-    `UPDATE accounts
+  const u = db
+    .prepare(
+      `UPDATE accounts
      SET balance_cents = balance_cents - ?, updated_at = datetime('now')
      WHERE owner=? AND balance_cents >= ?`
-  ).run(cents, owner, cents);
+    )
+    .run(cents, owner, cents);
   if (u.changes !== 1) throw new Error("INSUFFICIENT_FUNDS");
   const jobId = uuidv4();
   db.prepare(
@@ -539,13 +618,17 @@ app.get("/jobs", auth, (req, res) => {
     params.push(`%${q}%`);
   }
   const whereSql = `WHERE ${where.join(" AND ")}`;
-  const total = db.prepare(`SELECT COUNT(*) c FROM jobs ${whereSql}`).get(...params).c;
-  const rows = db.prepare(
-    `SELECT id,file_id,status,progress,charged_cents,refunded_cents,created_at,updated_at,
+  const total = db
+    .prepare(`SELECT COUNT(*) c FROM jobs ${whereSql}`)
+    .get(...params).c;
+  const rows = db
+    .prepare(
+      `SELECT id,file_id,status,progress,charged_cents,refunded_cents,created_at,updated_at,
             CASE WHEN thumbnail_path IS NOT NULL THEN 1 ELSE 0 END AS has_thumbnail
      FROM jobs ${whereSql}
      ORDER BY ${sort} ${order} LIMIT ? OFFSET ?`
-  ).all(...params, size, offset);
+    )
+    .all(...params, size, offset);
   res.set("X-Total-Count", String(total));
   res.set("X-Page", String(page));
   res.set("X-Page-Size", String(size));
@@ -553,7 +636,8 @@ app.get("/jobs", auth, (req, res) => {
 });
 
 app.get("/jobs/:id/logs", auth, (req, res) => {
-  const row = db.prepare(`SELECT log FROM jobs WHERE id=? AND owner=?`)
+  const row = db
+    .prepare(`SELECT log FROM jobs WHERE id=? AND owner=?`)
     .get(req.params.id, req.user.sub);
   if (!row) return res.sendStatus(404);
   res.setHeader("Content-Type", "text/plain; charset=utf-8");
@@ -561,28 +645,45 @@ app.get("/jobs/:id/logs", auth, (req, res) => {
 });
 
 app.get("/jobs/:id/thumbnail", auth, (req, res) => {
-  const row = db.prepare(`SELECT owner,thumbnail_path,thumbnail_name FROM jobs WHERE id=?`)
+  const row = db
+    .prepare(`SELECT owner,thumbnail_path,thumbnail_name FROM jobs WHERE id=?`)
     .get(req.params.id);
-  if (!row || row.owner !== req.user.sub || !row.thumbnail_path || !fs.existsSync(row.thumbnail_path))
+  if (
+    !row ||
+    row.owner !== req.user.sub ||
+    !row.thumbnail_path ||
+    !fs.existsSync(row.thumbnail_path)
+  )
     return res.sendStatus(404);
-  res.setHeader("Content-Disposition", `inline; filename="${path.basename(row.thumbnail_name || "thumb.jpg")}"`);
+  res.setHeader(
+    "Content-Disposition",
+    `inline; filename="${path.basename(row.thumbnail_name || "thumb.jpg")}"`
+  );
   res.sendFile(row.thumbnail_path);
 });
 
 app.get("/download/transcoded/:jobId", auth, (req, res) => {
-  const j = db.prepare(`SELECT owner,status,output_path,output_name FROM jobs WHERE id=?`)
+  const j = db
+    .prepare(`SELECT owner,status,output_path,output_name FROM jobs WHERE id=?`)
     .get(req.params.jobId);
   if (!j || j.owner !== req.user.sub) return res.sendStatus(404);
-  if (j.status !== "completed" || !j.output_path || !fs.existsSync(j.output_path))
+  if (
+    j.status !== "completed" ||
+    !j.output_path ||
+    !fs.existsSync(j.output_path)
+  )
     return res.status(409).json({ ok: false, error: "not ready" });
-  res.setHeader("Content-Disposition", `attachment; filename="${path.basename(j.output_name || j.output_path)}"`);
+  res.setHeader(
+    "Content-Disposition",
+    `attachment; filename="${path.basename(j.output_name || j.output_path)}"`
+  );
   res.sendFile(j.output_path);
 });
 
 app.post("/transcode/:fileId", auth, async (req, res) => {
-  const f = db.prepare(
-    `SELECT id,stored_path,filename FROM files WHERE id=? AND owner=?`
-  ).get(req.params.fileId, req.user.sub);
+  const f = db
+    .prepare(`SELECT id,stored_path,filename FROM files WHERE id=? AND owner=?`)
+    .get(req.params.fileId, req.user.sub);
   if (!f) return res.sendStatus(404);
 
   const format = String(req.body?.format || "mp4").toLowerCase();
@@ -592,7 +693,12 @@ app.post("/transcode/:fileId", auth, async (req, res) => {
 
   let jobId;
   try {
-    jobId = createJobWithCharge(req.user.sub, f.id, TRANSCODE_COST_CENTS, { format, crf, preset, scale });
+    jobId = createJobWithCharge(req.user.sub, f.id, TRANSCODE_COST_CENTS, {
+      format,
+      crf,
+      preset,
+      scale,
+    });
   } catch (e) {
     if (e.message === "INSUFFICIENT_FUNDS")
       return res.status(402).json({ ok: false, error: "insufficient funds" });
@@ -600,44 +706,86 @@ app.post("/transcode/:fileId", auth, async (req, res) => {
   }
 
   res.json({ ok: true, jobId });
-  db.prepare(`UPDATE jobs SET status='running', updated_at=datetime('now') WHERE id=?`).run(jobId);
+  db.prepare(
+    `UPDATE jobs SET status='running', updated_at=datetime('now') WHERE id=?`
+  ).run(jobId);
 
   const outId = uuidv4();
-  const outName = `${outId}-${path.basename(f.filename, path.extname(f.filename))}.${format}`;
+  const outName = `${outId}-${path.basename(
+    f.filename,
+    path.extname(f.filename)
+  )}.${format}`;
   const outPath = path.join(OUT_DIR, outName);
   let logBuf = "";
   const appendLog = (s) => {
     logBuf += s + "\n";
-    db.prepare(`UPDATE jobs SET log=?, updated_at=datetime('now') WHERE id=?`).run(logBuf, jobId);
+    db.prepare(
+      `UPDATE jobs SET log=?, updated_at=datetime('now') WHERE id=?`
+    ).run(logBuf, jobId);
   };
 
+  // Transcoding
   try {
-    await new Promise((resolve, reject) => {
-      ffmpeg(f.stored_path)
+    await new Promise(async (resolve, reject) => {
+      const getCommand = new GetObjectCommand({
+        Bucket: BUCKET,
+        Key: f.stored_path,
+      });
+      const s3Object = await s3.send(getCommand);
+      const s3Stream = s3Object.Body; // Readable stream
+
+      ffmpeg(s3Stream)
         .addOptions([
           "-y",
-          `-vf`, `scale=${scale}`,
-          "-preset", preset,
-          ...(format === "mp4" ? ["-vcodec", "libx264", "-crf", crf, "-movflags", "faststart"] : []),
-          ...(format === "webm" ? ["-vcodec", "libvpx-vp9", "-crf", crf, "-b:v", "0"] : []),
+          `-vf`,
+          `scale=${scale}`,
+          "-preset",
+          preset,
+          ...(format === "mp4"
+            ? ["-vcodec", "libx264", "-crf", crf, "-movflags", "faststart"]
+            : []),
+          ...(format === "webm"
+            ? ["-vcodec", "libvpx-vp9", "-crf", crf, "-b:v", "0"]
+            : []),
         ])
         .on("start", (cmd) => appendLog("FFMPEG START: " + cmd))
         .on("stderr", (line) => {
           appendLog(line);
-          const cur = db.prepare(`SELECT progress FROM jobs WHERE id=?`).get(jobId)?.progress ?? 0;
+          const cur =
+            db.prepare(`SELECT progress FROM jobs WHERE id=?`).get(jobId)
+              ?.progress ?? 0;
           const p = Math.min(95, cur + 1);
-          db.prepare(`UPDATE jobs SET progress=?, updated_at=datetime('now') WHERE id=?`).run(p, jobId);
+          db.prepare(
+            `UPDATE jobs SET progress=?, updated_at=datetime('now') WHERE id=?`
+          ).run(p, jobId);
         })
         .on("error", (err) => reject(err))
         .on("end", () => resolve())
-        .save(outPath);
+        .save(outPath);  // 還是存到本地暫存再上傳到 S3
+        
     });
 
+    // 2️⃣ 上傳轉檔結果到 S3
+    const outputKey = `${req.user.sub}/transcoded/${outName}`;
+    await s3.send(
+      new PutObjectCommand({
+        Bucket: BUCKET,
+        Key: outputKey,
+        Body: fs.createReadStream(outPath),
+        ContentType: `video/${format}`,
+      })
+    );
+    fs.unlinkSync(outPath); // 刪掉本地暫存
+
     // thumbnail
-    const thumbName = `${uuidv4()}-${path.basename(f.filename, path.extname(f.filename))}.jpg`;
+    const thumbName = `${uuidv4()}-${path.basename(
+      f.filename,
+      path.extname(f.filename)
+    )}.jpg`;
     const thumbPath = path.join(THUMB_DIR, thumbName);
     await new Promise((resolve, reject) => {
-      ffmpeg(f.stored_path)
+      // ffmpeg(f.stored_path)
+      ffmpeg(s3Stream)
         .addOptions(["-y", "-ss", "5", "-frames:v", "1"])
         .on("start", (cmd) => appendLog("THUMB START: " + cmd))
         .on("error", (err) => reject(err))
@@ -645,29 +793,48 @@ app.post("/transcode/:fileId", auth, async (req, res) => {
         .save(thumbPath);
     });
 
+    // 4️⃣ 上傳縮圖到 S3
+    const thumbKey = `${req.user.sub}/thumbnails/${thumbName}`;
+    await s3.send(
+      new PutObjectCommand({
+        Bucket: BUCKET,
+        Key: thumbKey,
+        Body: fs.createReadStream(thumbPath),
+        ContentType: "image/jpeg",
+      })
+    );
+    fs.unlinkSync(thumbPath); // 刪掉本地暫存
+
+    // update DB
     db.prepare(
       `UPDATE jobs SET status='completed', progress=100,
         output_path=?, output_name=?, thumbnail_path=?, thumbnail_name=?,
         updated_at=datetime('now')
        WHERE id=?`
-    ).run(outPath, outName, thumbPath, thumbName, jobId);
+    ).run(outPath, outName, thumbKey, thumbName, jobId);
   } catch (e) {
     appendLog("ERROR: " + e.message);
-    db.prepare(`UPDATE jobs SET status='failed', updated_at=datetime('now') WHERE id=?`).run(jobId);
+    db.prepare(
+      `UPDATE jobs SET status='failed', updated_at=datetime('now') WHERE id=?`
+    ).run(jobId);
     // refund
     db.transaction((owner, amount) => {
-      const row = db.prepare(`SELECT refunded_cents FROM jobs WHERE id=? AND owner=?`).get(jobId, owner);
+      const row = db
+        .prepare(`SELECT refunded_cents FROM jobs WHERE id=? AND owner=?`)
+        .get(jobId, owner);
       if (!row || row.refunded_cents > 0) return;
-      db.prepare(`UPDATE accounts SET balance_cents=balance_cents+?, updated_at=datetime('now') WHERE owner=?`)
-        .run(amount, owner);
-      db.prepare(`UPDATE jobs SET refunded_cents=refunded_cents+?, updated_at=datetime('now') WHERE id=?`)
-        .run(amount, jobId);
+      db.prepare(
+        `UPDATE accounts SET balance_cents=balance_cents+?, updated_at=datetime('now') WHERE owner=?`
+      ).run(amount, owner);
+      db.prepare(
+        `UPDATE jobs SET refunded_cents=refunded_cents+?, updated_at=datetime('now') WHERE id=?`
+      ).run(amount, jobId);
     })(req.user.sub, TRANSCODE_COST_CENTS);
   }
 });
 
 app.get("/outputs", auth, (_req, res) => {
-  const items = fs.readdirSync(OUT_DIR).filter(f => !f.startsWith("."));
+  const items = fs.readdirSync(OUT_DIR).filter((f) => !f.startsWith("."));
   res.json({ items });
 });
 
