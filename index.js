@@ -9,8 +9,13 @@ import fs from "fs";
 import path from "path";
 import os from "os";
 import { fileURLToPath } from "url";
-import { S3Client, PutObjectCommand, GetObjectCommand } from "@aws-sdk/client-s3";
-
+import {
+  S3Client,
+  PutObjectCommand,
+  GetObjectCommand,
+} from "@aws-sdk/client-s3";
+import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
+import fetch from "node-fetch"; // npm i node-fetch@2
 
 // === Cognito ===
 import {
@@ -325,11 +330,10 @@ async function auth(req, res, next) {
     const m = (req.headers.authorization || "").match(/^Bearer (.+)$/i);
     if (!m) return res.status(401).json({ ok: false, error: "missing token" });
     const payload = await idTokenVerifier.verify(m[1]);
-    const username =
-      payload["cognito:username"] ||
-      payload["username"] ||
-      payload["email"] ||
-      payload.sub;
+    const rawName = payload["cognito:username"];
+    const username = typeof rawName === "string" ? rawName.trim() : "";
+    const isAdmin = username.toLowerCase() === "admin";
+
     req.user = {
       sub: username,
       email: payload.email || null,
@@ -358,8 +362,6 @@ const tmpDir = path.join(process.cwd(), "uploads");
 if (!fs.existsSync(tmpDir)) {
   fs.mkdirSync(tmpDir, { recursive: true });
 }
-// const tmpDir = path.join(os.tmpdir(), "uploads");
-// fs.mkdirSync(tmpDir, { recursive: true });
 
 const storage = multer.diskStorage({
   destination: (_req, _file, cb) => cb(null, tmpDir),
@@ -390,7 +392,7 @@ app.get("/me", auth, (req, res) => {
     .get(req.user.sub);
   res.json({
     user: req.user.sub,
-    admin: !!req.user.admin,
+    admin: !!req.user.admin, // ensure this is present
     balance_cents: a?.balance_cents ?? 0,
     updated_at: a?.updated_at ?? null,
   });
@@ -570,17 +572,78 @@ app.delete("/files/:id", auth, (req, res) => {
   res.json({ ok: true });
 });
 
-app.get("/download/original/:fileId", auth, (req, res) => {
-  const row = db
-    .prepare(`SELECT stored_path,filename FROM files WHERE id=? AND owner=?`)
-    .get(req.params.fileId, req.user.sub);
-  if (!row || !fs.existsSync(row.stored_path)) return res.sendStatus(404);
-  res.setHeader(
-    "Content-Disposition",
-    `attachment; filename="${path.basename(row.filename)}"`
-  );
-  res.sendFile(row.stored_path);
+// ----- admin: list all users' files -----
+app.get("/admin/files", auth, (req, res) => {
+  if (!req.user?.admin)
+    return res.status(403).json({ ok: false, error: "forbidden" });
+
+  const { page, size, offset, q, sort, order } = listParams(req, {
+    sortWhitelist: ["uploaded_at", "size_bytes", "filename", "owner"],
+    defaultSort: "uploaded_at",
+  });
+
+  const where = [];
+  const params = [];
+  if (q) {
+    // search in filename OR owner
+    where.push("(filename LIKE ? OR owner LIKE ?)");
+    params.push(`%${q}%`, `%${q}%`);
+  }
+  const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
+
+  const total = db
+    .prepare(`SELECT COUNT(*) c FROM files ${whereSql}`)
+    .get(...params).c;
+  const rows = db
+    .prepare(
+      `SELECT id, owner, filename, size_bytes, mime, uploaded_at
+     FROM files ${whereSql}
+     ORDER BY ${sort} ${order} LIMIT ? OFFSET ?`
+    )
+    .all(...params, size, offset);
+
+  res.set("X-Total-Count", String(total));
+  res.set("X-Page", String(page));
+  res.set("X-Page-Size", String(size));
+  res.json({ items: rows, total, page, size, sort, order, q });
 });
+
+app.get("/download/original/:fileId", auth, async (req, res) => {
+  const row = db
+    .prepare(`SELECT stored_path, filename FROM files WHERE id=? AND owner=?`)
+    .get(req.params.fileId, req.user.sub);
+
+  if (!row) return res.sendStatus(404);
+
+  try {
+    // 假設 stored_path 存的是 S3 key（例如 "uploads/xxx.mp4"）
+    const command = new GetObjectCommand({
+      Bucket: process.env.AWS_S3_BUCKET,
+      Key: row.stored_path,
+      ResponseContentDisposition: `attachment; filename="${row.filename}"`, // 保留原檔名
+    });
+
+    // 簽發 60 秒的 pre-signed URL
+    const url = await getSignedUrl(s3, command, { expiresIn: 60 });
+
+    res.json({ downloadUrl: url });
+  } catch (err) {
+    console.error("Error generating pre-signed URL:", err);
+    res.sendStatus(500);
+  }
+});
+
+// app.get("/download/original/:fileId", auth, (req, res) => {
+//   const row = db
+//     .prepare(`SELECT stored_path,filename FROM files WHERE id=? AND owner=?`)
+//     .get(req.params.fileId, req.user.sub);
+//   if (!row || !fs.existsSync(row.stored_path)) return res.sendStatus(404);
+//   res.setHeader(
+//     "Content-Disposition",
+//     `attachment; filename="${path.basename(row.filename)}"`
+//   );
+//   res.sendFile(row.stored_path);
+// });
 
 // ----- jobs -----
 const TRANSCODE_COST_CENTS = 50;
@@ -662,23 +725,41 @@ app.get("/jobs/:id/thumbnail", auth, (req, res) => {
   res.sendFile(row.thumbnail_path);
 });
 
-app.get("/download/transcoded/:jobId", auth, (req, res) => {
+app.get("/download/transcoded/:jobId", auth, async (req, res) => {
   const j = db
     .prepare(`SELECT owner,status,output_path,output_name FROM jobs WHERE id=?`)
     .get(req.params.jobId);
+
   if (!j || j.owner !== req.user.sub) return res.sendStatus(404);
-  if (
-    j.status !== "completed" ||
-    !j.output_path ||
-    !fs.existsSync(j.output_path)
-  )
+
+  // 檔案還沒完成或沒有 S3 Key
+  if (j.status !== "completed" || !j.output_path)
     return res.status(409).json({ ok: false, error: "not ready" });
-  res.setHeader(
-    "Content-Disposition",
-    `attachment; filename="${path.basename(j.output_name || j.output_path)}"`
-  );
-  res.sendFile(j.output_path);
+
+  try {
+    const command = new GetObjectCommand({
+      Bucket: process.env.AWS_S3_BUCKET,
+      Key: j.output_path, // 這裡必須是 S3 Key
+      ResponseContentDisposition: `attachment; filename="${path.basename(j.output_name || j.output_path)}"`,
+    });
+
+    const url = await getSignedUrl(s3, command, { expiresIn: 60 });
+
+    res.json({ downloadUrl: url });
+  } catch (err) {
+    console.error("Error generating pre-signed URL:", err);
+    res.sendStatus(500);
+  }
 });
+
+
+  //   return res.status(409).json({ ok: false, error: "not ready" });
+  // res.setHeader(
+  //   "Content-Disposition",
+  //   `attachment; filename="${path.basename(j.output_name || j.output_path)}"`
+  // );
+  // res.sendFile(j.output_path);
+
 
 app.post("/transcode/:fileId", auth, async (req, res) => {
   const f = db
@@ -761,8 +842,7 @@ app.post("/transcode/:fileId", auth, async (req, res) => {
         })
         .on("error", (err) => reject(err))
         .on("end", () => resolve())
-        .save(outPath);  // 還是存到本地暫存再上傳到 S3
-        
+        .save(outPath); // 還是存到本地暫存再上傳到 S3
     });
 
     // 2️⃣ 上傳轉檔結果到 S3
@@ -775,17 +855,19 @@ app.post("/transcode/:fileId", auth, async (req, res) => {
         ContentType: `video/${format}`,
       })
     );
-    fs.unlinkSync(outPath); // 刪掉本地暫存
+    // fs.unlinkSync(outPath); // 刪掉本地暫存
 
     // thumbnail
+    fs.mkdirSync(THUMB_DIR, { recursive: true });
     const thumbName = `${uuidv4()}-${path.basename(
       f.filename,
       path.extname(f.filename)
     )}.jpg`;
     const thumbPath = path.join(THUMB_DIR, thumbName);
-    await new Promise((resolve, reject) => {
-      // ffmpeg(f.stored_path)
-      ffmpeg(s3Stream)
+    await new Promise(async (resolve, reject) => {
+      // const s3ObjectThumb = await s3.send(getCommand);
+      // const s3StreamThumb = s3ObjectThumb.Body; // Readable stream
+      ffmpeg(outPath)
         .addOptions(["-y", "-ss", "5", "-frames:v", "1"])
         .on("start", (cmd) => appendLog("THUMB START: " + cmd))
         .on("error", (err) => reject(err))
@@ -804,6 +886,7 @@ app.post("/transcode/:fileId", auth, async (req, res) => {
       })
     );
     fs.unlinkSync(thumbPath); // 刪掉本地暫存
+    fs.unlinkSync(outPath); // 刪掉本地暫存
 
     // update DB
     db.prepare(
@@ -811,7 +894,7 @@ app.post("/transcode/:fileId", auth, async (req, res) => {
         output_path=?, output_name=?, thumbnail_path=?, thumbnail_name=?,
         updated_at=datetime('now')
        WHERE id=?`
-    ).run(outPath, outName, thumbKey, thumbName, jobId);
+    ).run(outputKey, outName, thumbKey, thumbName, jobId);
   } catch (e) {
     appendLog("ERROR: " + e.message);
     db.prepare(
