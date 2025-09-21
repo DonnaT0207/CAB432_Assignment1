@@ -16,3 +16,10 @@ node_modules/
 *.mov
 *.mkv
 *.zip
+
+# large/local-only
+uploads/
+*.mp4
+*.mov
+*.mkv
+*.zip
