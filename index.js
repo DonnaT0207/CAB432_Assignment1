@@ -13,6 +13,7 @@ import {
   S3Client,
   PutObjectCommand,
   GetObjectCommand,
+  DeleteObjectCommand,
 } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import fetch from "node-fetch"; // npm i node-fetch@2
@@ -128,7 +129,7 @@ CREATE TABLE IF NOT EXISTS files (
 CREATE TABLE IF NOT EXISTS jobs (
   id TEXT PRIMARY KEY,
   owner TEXT NOT NULL,
-  file_id TEXT NOT NULL,
+  file_id TEXT,
   status TEXT NOT NULL,
   params TEXT NOT NULL,
   progress REAL NOT NULL DEFAULT 0,
@@ -141,11 +142,16 @@ CREATE TABLE IF NOT EXISTS jobs (
   thumbnail_name TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
-  FOREIGN KEY (file_id) REFERENCES files(id) ON DELETE CASCADE
+  FOREIGN KEY (file_id) REFERENCES files(id) ON DELETE SET NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_jobs_updated_at ON jobs(updated_at);
 `);
+
+// 確認是否需要設定這部分，會造成刪除原始檔案時，轉檔檔案也會一起刪除
+// FOREIGN KEY (file_id) REFERENCES files(id) ON DELETE CASCADE
+// FOREIGN KEY (file_id) REFERENCES files(id)
+// file_id TEXT, -- 注意：不再 NOT NULL
 
 function columnExists(table, col) {
   return db
@@ -183,7 +189,7 @@ function fkExists(table, refTable) {
       CREATE TABLE IF NOT EXISTS jobs_new (
         id TEXT PRIMARY KEY,
         owner TEXT NOT NULL,
-        file_id TEXT NOT NULL,
+        file_id TEXT,
         status TEXT NOT NULL,
         params TEXT NOT NULL,
         progress REAL NOT NULL DEFAULT 0,
@@ -196,7 +202,7 @@ function fkExists(table, refTable) {
         thumbnail_name TEXT,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL,
-        FOREIGN KEY (file_id) REFERENCES files(id) ON DELETE CASCADE
+        FOREIGN KEY (file_id) REFERENCES files(id) ON DELETE SET NULL
       );
       INSERT INTO jobs_new
       SELECT id, owner, file_id, status, COALESCE(params,'{}'), COALESCE(progress,0),
@@ -413,51 +419,90 @@ app.post("/accounts/topup", auth, (req, res) => {
 });
 
 // ----- files -----
-app.post("/upload", auth, upload.single("file"), async (req, res) => {
-  if (!req.file) return res.status(400).json({ ok: false, error: "no file" });
+app.post("/upload-url", auth, async (req, res) => {
   const id = uuidv4();
-  const original = req.file.originalname || "upload.bin";
+  const original = req.body.filename || "upload.bin";
   const safeName = `${id}-${original.replace(/[^\w.\-]+/g, "_")}`;
-
-  // ======================================new Added section=====================================
   const username = req.user.sub;
+  const fileSize = req.body.size;
+  const fileType = req.body.mimetype;
   const s3Key = `${username}/uploaded/${safeName}`;
-  const fileStream = fs.createReadStream(req.file.path);
-  console.log("Temp file path:", req.file.path);
+
   try {
-    // 上傳到 S3
+    // 建立 presigned PUT URL
     const command = new PutObjectCommand({
       Bucket: BUCKET,
       Key: s3Key,
-      Body: fileStream,
-      ContentType: req.file.mimetype,
+      ContentType: req.body.mimeType || "application/octet-stream",
     });
-    await s3.send(command);
 
-    // 上傳完成，刪掉本地暫存
-    try {
-      fs.unlinkSync(req.file.path);
-    } catch {}
+    const uploadUrl = await getSignedUrl(s3, command, { expiresIn: 3600 });
+    console.log("Presigned upload URL:", uploadUrl);
 
-    // 存資料庫
+
+    // 存 DB（只存 metadata，不存檔案）
     db.prepare(
-      `INSERT INTO files (id,owner,filename,stored_path,size_bytes,mime,uploaded_at)
+      `INSERT INTO files (id, owner, filename, stored_path, size_bytes, mime, uploaded_at)
        VALUES (?,?,?,?,?,?,datetime('now'))`
-    ).run(
-      id,
-      username,
-      original,
-      s3Key,
-      req.file.size,
-      req.file.mimetype || null
-    );
+    ).run(id, username, original, s3Key, fileSize, fileType || null);
 
-    res.json({ ok: true, fileId: id, filename: original, s3Key });
-  } catch (e) {
-    console.error("Upload failed:", e);
-    res.status(500).json({ ok: false, error: "upload failed: " + e.message });
+    res.json({
+      ok: true,
+      fileId: id,
+      s3Key,
+      uploadUrl,
+    });
+  } catch (err) {
+    console.error("Error generating upload URL:", err);
+    res.status(500).json({ ok: false, error: "failed to generate URL" });
   }
 });
+
+
+// app.post("/upload", auth, upload.single("file"), async (req, res) => {
+//   if (!req.file) return res.status(400).json({ ok: false, error: "no file" });
+//   const id = uuidv4();
+//   const original = req.file.originalname || "upload.bin";
+//   const safeName = `${id}-${original.replace(/[^\w.\-]+/g, "_")}`;
+
+//   // ======================================new Added section=====================================
+//   const username = req.user.sub;
+//   const s3Key = `${username}/uploaded/${safeName}`;
+//   const fileStream = fs.createReadStream(req.file.path);
+//   console.log("Temp file path:", req.file.path);
+//   try {
+//     // 上傳到 S3
+//     const command = new PutObjectCommand({
+//       Bucket: BUCKET,
+//       Key: s3Key,
+//       Body: fileStream,
+//       ContentType: req.file.mimetype,
+//     });
+//     await s3.send(command);
+
+//     // 上傳完成，刪掉本地暫存
+//     try {
+//       fs.unlinkSync(req.file.path);
+//     } catch {}
+
+//     // 存資料庫
+//     db.prepare(
+//       `INSERT INTO files (id,owner,filename,stored_path,size_bytes,mime,uploaded_at)
+//        VALUES (?,?,?,?,?,?,datetime('now'))`
+//     ).run(
+//       id,
+//       username,
+//       original,
+//       s3Key,
+//       req.file.size,
+//       req.file.mimetype || null
+//     );
+
+//   } catch (e) {
+//     console.error("Upload failed:", e);
+//     res.status(500).json({ ok: false, error: "upload failed: " + e.message });
+//   }
+// });
 // ======================================new Added section=====================================
 
 app.get("/files", auth, (req, res) => {
@@ -554,21 +599,30 @@ app.post("/files/:id/subs", auth, async (req, res) => {
   }
 });
 
-app.delete("/files/:id", auth, (req, res) => {
+app.delete("/files/:id", auth, async (req, res) => {
   const row = db
     .prepare(`SELECT stored_path FROM files WHERE id=? AND owner=?`)
     .get(req.params.id, req.user.sub);
   if (!row) return res.sendStatus(404);
-  const r = db
-    .prepare(`DELETE FROM files WHERE id=? AND owner=?`)
-    .run(req.params.id, req.user.sub);
-  if (r.changes !== 1)
-    return res.status(500).json({ ok: false, error: "delete failed" });
+
   try {
-    fs.unlinkSync(row.stored_path);
+    // 刪除 S3 物件
+    await s3.send(
+      new DeleteObjectCommand({
+        Bucket: BUCKET,
+        Key: row.stored_path, // 這裡就是存 DB 的 Key
+      })
+    );
   } catch (e) {
-    log("unlink warn:", e.message);
+    log("S3 delete warn:", e.message);
   }
+
+    const r = db
+    .prepare(`DELETE FROM files WHERE stored_path=?`)
+    .run(row.stored_path);
+    console.log("stored_path:" + row.stored_path);
+  if (r.changes !== 1)
+    return res.status(500).json({ ok: false, error: "DB record delete failed." });
   res.json({ ok: true });
 });
 
@@ -618,7 +672,7 @@ app.get("/download/original/:fileId", auth, async (req, res) => {
   try {
     // 假設 stored_path 存的是 S3 key（例如 "uploads/xxx.mp4"）
     const command = new GetObjectCommand({
-      Bucket: process.env.AWS_S3_BUCKET,
+      Bucket: BUCKET,
       Key: row.stored_path,
       ResponseContentDisposition: `attachment; filename="${row.filename}"`, // 保留原檔名
     });
@@ -740,9 +794,12 @@ app.get("/download/transcoded/:jobId", auth, async (req, res) => {
     const command = new GetObjectCommand({
       Bucket: process.env.AWS_S3_BUCKET,
       Key: j.output_path, // 這裡必須是 S3 Key
-      ResponseContentDisposition: `attachment; filename="${path.basename(j.output_name || j.output_path)}"`,
+      ResponseContentDisposition: `attachment; filename="${path.basename(
+        j.output_name || j.output_path
+      )}"`,
     });
 
+    // use pre-sign url to download.
     const url = await getSignedUrl(s3, command, { expiresIn: 60 });
 
     res.json({ downloadUrl: url });
@@ -752,14 +809,12 @@ app.get("/download/transcoded/:jobId", auth, async (req, res) => {
   }
 });
 
-
-  //   return res.status(409).json({ ok: false, error: "not ready" });
-  // res.setHeader(
-  //   "Content-Disposition",
-  //   `attachment; filename="${path.basename(j.output_name || j.output_path)}"`
-  // );
-  // res.sendFile(j.output_path);
-
+//   return res.status(409).json({ ok: false, error: "not ready" });
+// res.setHeader(
+//   "Content-Disposition",
+//   `attachment; filename="${path.basename(j.output_name || j.output_path)}"`
+// );
+// res.sendFile(j.output_path);
 
 app.post("/transcode/:fileId", auth, async (req, res) => {
   const f = db
@@ -855,7 +910,6 @@ app.post("/transcode/:fileId", auth, async (req, res) => {
         ContentType: `video/${format}`,
       })
     );
-    // fs.unlinkSync(outPath); // 刪掉本地暫存
 
     // thumbnail
     fs.mkdirSync(THUMB_DIR, { recursive: true });

@@ -1,70 +1,317 @@
 <!doctype html>
 <html lang="en">
+
 <head>
   <meta charset="utf-8" />
   <title>Video API Client</title>
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <style>
-    :root{
-      --bg:#0f172a;--bg-grad-1:#0f172a;--bg-grad-2:#111827;--card:rgba(255,255,255,0.06);
-      --card-border:rgba(255,255,255,0.12);--text:#e5e7eb;--muted:#9ca3af;--primary:#60a5fa;
-      --primary-600:#2563eb;--success:#22c55e;--warning:#f59e0b;--danger:#ef4444;
-      --pill-bg:rgba(255,255,255,0.08);--shadow:0 10px 30px rgba(0,0,0,0.35);
-      --ring:0 0 0 3px rgba(96,165,250,0.35);--radius:14px;
+    :root {
+      --bg: #0f172a;
+      --bg-grad-1: #0f172a;
+      --bg-grad-2: #111827;
+      --card: rgba(255, 255, 255, 0.06);
+      --card-border: rgba(255, 255, 255, 0.12);
+      --text: #e5e7eb;
+      --muted: #9ca3af;
+      --primary: #60a5fa;
+      --primary-600: #2563eb;
+      --success: #22c55e;
+      --warning: #f59e0b;
+      --danger: #ef4444;
+      --pill-bg: rgba(255, 255, 255, 0.08);
+      --shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+      --ring: 0 0 0 3px rgba(96, 165, 250, 0.35);
+      --radius: 14px;
     }
-    body{margin:0;color:var(--text);font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Arial;
-      background:radial-gradient(1200px 800px at 10% -10%,#1f2937 0%,transparent 50%),
-                 radial-gradient(1000px 700px at 110% 10%,#0ea5e9 0%,transparent 60%),
-                 linear-gradient(180deg,var(--bg-grad-1),var(--bg-grad-2));min-height:100svh;}
-    .container{max-width:1024px;margin:32px auto;padding:0 16px;}
-    h1{font-weight:800;letter-spacing:.3px;margin:8px 0 22px;font-size:clamp(26px,3vw,36px);}
-    .grid{display:grid;gap:16px;} @media(min-width:900px){.grid-2{grid-template-columns:1fr 1fr}}
-    .card{background:var(--card);border:1px solid var(--card-border);border-radius:var(--radius);
-      padding:18px 18px 16px;box-shadow:var(--shadow);backdrop-filter:blur(6px);
-      transition:transform .15s ease,border-color .2s ease;}
-    .card h2{margin:0 0 12px;font-size:18px;letter-spacing:.2px}
-    .subtle{color:var(--muted);font-size:14px}
-    .btn{appearance:none;border:1px solid transparent;border-radius:10px;padding:8px 12px;
-      font-weight:600;letter-spacing:.2px;transition:transform .05s ease,background .15s ease,
-      border-color .15s ease,color .15s ease;cursor:pointer;user-select:none}
-    .btn:active{transform:translateY(1px) scale(.99)}
-    .btn[disabled]{opacity:.5;cursor:not-allowed}
-    .btn.primary{background:linear-gradient(180deg,var(--primary),var(--primary-600));color:#fff;
-      box-shadow:0 6px 18px rgba(37,99,235,.35)}
-    .btn.secondary{background:transparent;color:var(--text);border-color:rgba(255,255,255,0.2)}
-    .btn.success{background:linear-gradient(180deg,#34d399,#10b981);color:#052e1f}
-    .btn.danger{background:linear-gradient(180deg,#fda4af,#ef4444);color:#3b0a0a}
-    .row{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
-    input[type="text"],input[type="password"],input[type="number"]{background:rgba(255,255,255,0.06);color:var(--text);
-      border:1px solid rgba(255,255,255,0.18);outline:none;padding:8px 10px;border-radius:10px;min-width:160px}
-    input:focus{box-shadow:var(--ring);border-color:rgba(96,165,250,.5)}
-    input[type="file"]{color:var(--muted)}
-    code{background:rgba(255,255,255,0.08);padding:2px 6px;border-radius:6px}
-    .muted{color:var(--muted)}
-    .list{display:grid;gap:10px}
-    .item{border:1px dashed rgba(255,255,255,0.18);border-radius:12px;padding:12px;display:grid;gap:8px;
-      background:rgba(255,255,255,0.035)}
-    .item-head{display:flex;justify-content:space-between;align-items:center;gap:10px}
-    .item-title{font-weight:700}
-    .actions{display:flex;gap:8px;flex-wrap:wrap}
-    .pill{display:inline-flex;align-items:center;gap:6px;border-radius:999px;padding:4px 10px;font-weight:700;
-      font-size:12px;background:var(--pill-bg);border:1px solid rgba(255,255,255,0.16)}
-    .pill.success{color:#22c55e}.pill.warn{color:#f59e0b}.pill.danger{color:#ef4444}
-    .spinner{width:12px;height:12px;border-radius:999px;border:2px solid rgba(255,255,255,.2);
-      border-top-color:var(--primary);animation:spin .8s linear infinite}
-    @keyframes spin{to{transform:rotate(360deg)}}
-    .small{font-size:12px}.sep{opacity:.35;margin:0 6px}.empty{font-style:italic;color:var(--muted);padding:6px 2px}
-    .toasts{position:fixed;right:18px;bottom:18px;display:grid;gap:10px;z-index:50}
-    .toast{background:rgba(17,24,39,0.9);color:#e5e7eb;border:1px solid rgba(255,255,255,0.15);border-radius:12px;
-      padding:10px 12px;box-shadow:var(--shadow);min-width:220px;animation:pop .15s ease-out}
-    .toast.success{border-color:rgba(16,185,129,.45)}.toast.error{border-color:rgba(239,68,68,.45)}
-    @keyframes pop{from{transform:translateY(6px);opacity:0}to{transform:none;opacity:1}}
-    .section-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px}
-    select.format{background:rgba(255,255,255,0.06);color:var(--text);border:1px solid rgba(255,255,255,0.18);
-      padding:8px 10px;border-radius:10px}
-    .pager{display:flex;align-items:center;gap:8px;margin-top:6px}
+
+    body {
+      margin: 0;
+      color: var(--text);
+      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial;
+      background: radial-gradient(1200px 800px at 10% -10%, #1f2937 0%, transparent 50%),
+        radial-gradient(1000px 700px at 110% 10%, #0ea5e9 0%, transparent 60%),
+        linear-gradient(180deg, var(--bg-grad-1), var(--bg-grad-2));
+      min-height: 100svh;
+    }
+
+    .container {
+      max-width: 1024px;
+      margin: 32px auto;
+      padding: 0 16px;
+    }
+
+    h1 {
+      font-weight: 800;
+      letter-spacing: .3px;
+      margin: 8px 0 22px;
+      font-size: clamp(26px, 3vw, 36px);
+    }
+
+    .grid {
+      display: grid;
+      gap: 16px;
+    }
+
+    @media(min-width:900px) {
+      .grid-2 {
+        grid-template-columns: 1fr 1fr
+      }
+    }
+
+    .card {
+      background: var(--card);
+      border: 1px solid var(--card-border);
+      border-radius: var(--radius);
+      padding: 18px 18px 16px;
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(6px);
+      transition: transform .15s ease, border-color .2s ease;
+    }
+
+    .card h2 {
+      margin: 0 0 12px;
+      font-size: 18px;
+      letter-spacing: .2px
+    }
+
+    .subtle {
+      color: var(--muted);
+      font-size: 14px
+    }
+
+    .btn {
+      appearance: none;
+      border: 1px solid transparent;
+      border-radius: 10px;
+      padding: 8px 12px;
+      font-weight: 600;
+      letter-spacing: .2px;
+      transition: transform .05s ease, background .15s ease,
+        border-color .15s ease, color .15s ease;
+      cursor: pointer;
+      user-select: none
+    }
+
+    .btn:active {
+      transform: translateY(1px) scale(.99)
+    }
+
+    .btn[disabled] {
+      opacity: .5;
+      cursor: not-allowed
+    }
+
+    .btn.primary {
+      background: linear-gradient(180deg, var(--primary), var(--primary-600));
+      color: #fff;
+      box-shadow: 0 6px 18px rgba(37, 99, 235, .35)
+    }
+
+    .btn.secondary {
+      background: transparent;
+      color: var(--text);
+      border-color: rgba(255, 255, 255, 0.2)
+    }
+
+    .btn.success {
+      background: linear-gradient(180deg, #34d399, #10b981);
+      color: #052e1f
+    }
+
+    .btn.danger {
+      background: linear-gradient(180deg, #fda4af, #ef4444);
+      color: #3b0a0a
+    }
+
+    .row {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px
+    }
+
+    input[type="text"],
+    input[type="password"],
+    input[type="number"] {
+      background: rgba(255, 255, 255, 0.06);
+      color: var(--text);
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      outline: none;
+      padding: 8px 10px;
+      border-radius: 10px;
+      min-width: 160px
+    }
+
+    input:focus {
+      box-shadow: var(--ring);
+      border-color: rgba(96, 165, 250, .5)
+    }
+
+    input[type="file"] {
+      color: var(--muted)
+    }
+
+    code {
+      background: rgba(255, 255, 255, 0.08);
+      padding: 2px 6px;
+      border-radius: 6px
+    }
+
+    .muted {
+      color: var(--muted)
+    }
+
+    .list {
+      display: grid;
+      gap: 10px
+    }
+
+    .item {
+      border: 1px dashed rgba(255, 255, 255, 0.18);
+      border-radius: 12px;
+      padding: 12px;
+      display: grid;
+      gap: 8px;
+      background: rgba(255, 255, 255, 0.035)
+    }
+
+    .item-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px
+    }
+
+    .item-title {
+      font-weight: 700
+    }
+
+    .actions {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      border-radius: 999px;
+      padding: 4px 10px;
+      font-weight: 700;
+      font-size: 12px;
+      background: var(--pill-bg);
+      border: 1px solid rgba(255, 255, 255, 0.16)
+    }
+
+    .pill.success {
+      color: #22c55e
+    }
+
+    .pill.warn {
+      color: #f59e0b
+    }
+
+    .pill.danger {
+      color: #ef4444
+    }
+
+    .spinner {
+      width: 12px;
+      height: 12px;
+      border-radius: 999px;
+      border: 2px solid rgba(255, 255, 255, .2);
+      border-top-color: var(--primary);
+      animation: spin .8s linear infinite
+    }
+
+    @keyframes spin {
+      to {
+        transform: rotate(360deg)
+      }
+    }
+
+    .small {
+      font-size: 12px
+    }
+
+    .sep {
+      opacity: .35;
+      margin: 0 6px
+    }
+
+    .empty {
+      font-style: italic;
+      color: var(--muted);
+      padding: 6px 2px
+    }
+
+    .toasts {
+      position: fixed;
+      right: 18px;
+      bottom: 18px;
+      display: grid;
+      gap: 10px;
+      z-index: 50
+    }
+
+    .toast {
+      background: rgba(17, 24, 39, 0.9);
+      color: #e5e7eb;
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      border-radius: 12px;
+      padding: 10px 12px;
+      box-shadow: var(--shadow);
+      min-width: 220px;
+      animation: pop .15s ease-out
+    }
+
+    .toast.success {
+      border-color: rgba(16, 185, 129, .45)
+    }
+
+    .toast.error {
+      border-color: rgba(239, 68, 68, .45)
+    }
+
+    @keyframes pop {
+      from {
+        transform: translateY(6px);
+        opacity: 0
+      }
+
+      to {
+        transform: none;
+        opacity: 1
+      }
+    }
+
+    .section-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      margin-bottom: 8px
+    }
+
+    select.format {
+      background: rgba(255, 255, 255, 0.06);
+      color: var(--text);
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      padding: 8px 10px;
+      border-radius: 10px
+    }
+
+    .pager {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: 6px
+    }
   </style>
 </head>
+
 <body>
   <div class="container">
     <h1>Video API Client</h1>
@@ -126,7 +373,9 @@
             <option value="asc">Asc</option>
           </select>
           <select id="filesSize">
-            <option value="5">5</option><option value="10" selected>10</option><option value="20">20</option>
+            <option value="5">5</option>
+            <option value="10" selected>10</option>
+            <option value="20">20</option>
           </select>
           <button id="btnList" class="btn secondary" disabled>Refresh files</button>
         </div>
@@ -162,7 +411,9 @@
             <option value="asc">Asc</option>
           </select>
           <select id="jobsSize">
-            <option value="5">5</option><option value="10" selected>10</option><option value="20">20</option>
+            <option value="5">5</option>
+            <option value="10" selected>10</option>
+            <option value="20">20</option>
           </select>
           <button id="btnJobs" class="btn secondary" disabled>Refresh jobs</button>
           <label class="small muted" style="display:flex;align-items:center;gap:6px;">
@@ -183,120 +434,189 @@
 
   <div class="toasts" id="toasts"></div>
 
-<script>
-// --- state & utils ---
-const BASE = location.origin;
-let token = null, jobsInterval = null;
-let filesPage=1, jobsPage=1;
+  <script>
+    // --- state & utils ---
+    const BASE = location.origin;
+    let token = null, jobsInterval = null;
+    let filesPage = 1, jobsPage = 1;
 
-const $ = (q)=>document.querySelector(q);
-function toast(msg,type="success",t=2500){const w=$("#toasts");const d=document.createElement("div");
-d.className=`toast ${type}`;d.textContent=msg;w.appendChild(d);setTimeout(()=>d.remove(),t)}
-function setAuthPill(text,kind){const p=$("#authState");p.className=`pill ${kind}`;
-p.innerHTML=`${kind==='warn'?'<span class="spinner"></span> ':''}${text}`}
-function toggleUI(on){
-  $("#file").disabled=!on;$("#btnUpload").disabled=!on;$("#btnList").disabled=!on;
-  $("#btnJobs").disabled=!on;$("#btnLogout").disabled=!on;$("#btnLogin").disabled=on;$("#btnTopup").disabled=!on;
-  $("#autoJobs").disabled=!on;["filesQ","filesSort","filesOrder","filesSize","jobStatus","jobsSort","jobsOrder","jobsSize"].forEach(id=>{$("#"+id).disabled=!on});
-  $("#tok").textContent=on?(token.slice(0,24)+'...'):'-';
-  if(!on){
-    setAuthPill('Not logged in','warn');$("#files").innerHTML='';$("#jobs").innerHTML='';clearInterval(jobsInterval);setBalance(0)
-  }else{
-    setAuthPill('Logged in','success');refreshMe();listFiles();listJobs();
-    jobsInterval=setInterval(()=>token&&listJobs(),5000)
-  }
-}
-function authHeaders(){return token?{Authorization:'Bearer '+token}:{}} 
-async function guardFetch(url,opts={}){const r=await fetch(url,{...opts,headers:{...(opts.headers||{}),...authHeaders()}});
-if(r.status===401){token=null;localStorage.removeItem("idToken");toggleUI(false);toast('Unauthorized','error');throw new Error('Unauthorized')} return r}
-function escapeHtml(s){return (s==null)?'':String(s).replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;').replaceAll("'",'&#39;')}
-function setBalance(cents){ $("#bal").textContent=(Number(cents||0)/100).toFixed(2); }
-function debounce(fn, delay=300){ let t; return (...args)=>{ clearTimeout(t); t=setTimeout(()=>fn(...args), delay); }; }
+    const $ = (q) => document.querySelector(q);
+    function toast(msg, type = "success", t = 2500) {
+      const w = $("#toasts"); const d = document.createElement("div");
+      d.className = `toast ${type}`; d.textContent = msg; w.appendChild(d); setTimeout(() => d.remove(), t)
+    }
+    function setAuthPill(text, kind) {
+      const p = $("#authState"); p.className = `pill ${kind}`;
+      p.innerHTML = `${kind === 'warn' ? '<span class="spinner"></span> ' : ''}${text}`
+    }
+    function toggleUI(on) {
+      $("#file").disabled = !on; $("#btnUpload").disabled = !on; $("#btnList").disabled = !on;
+      $("#btnJobs").disabled = !on; $("#btnLogout").disabled = !on; $("#btnLogin").disabled = on; $("#btnTopup").disabled = !on;
+      $("#autoJobs").disabled = !on;["filesQ", "filesSort", "filesOrder", "filesSize", "jobStatus", "jobsSort", "jobsOrder", "jobsSize"].forEach(id => { $("#" + id).disabled = !on });
+      $("#tok").textContent = on ? (token.slice(0, 24) + '...') : '-';
+      if (!on) {
+        setAuthPill('Not logged in', 'warn'); $("#files").innerHTML = ''; $("#jobs").innerHTML = ''; clearInterval(jobsInterval); setBalance(0)
+      } else {
+        setAuthPill('Logged in', 'success'); refreshMe(); listFiles(); listJobs();
+        jobsInterval = setInterval(() => token && listJobs(), 5000)
+      }
+    }
+    function authHeaders() { return token ? { Authorization: 'Bearer ' + token } : {} }
+    async function guardFetch(url, opts = {}) {
+      const r = await fetch(url, { ...opts, headers: { ...(opts.headers || {}), ...authHeaders() } });
+      if (r.status === 401) { token = null; localStorage.removeItem("idToken"); toggleUI(false); toast('Unauthorized', 'error'); throw new Error('Unauthorized') } return r
+    }
+    function escapeHtml(s) { return (s == null) ? '' : String(s).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;').replaceAll("'", '&#39;') }
+    function setBalance(cents) { $("#bal").textContent = (Number(cents || 0) / 100).toFixed(2); }
+    function debounce(fn, delay = 300) { let t; return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), delay); }; }
 
-// --- signup / confirm ---
-async function signupFlow(){
-  const username=$("#u").value.trim(), password=$("#p").value;
-  const email = prompt("Enter your email for sign-up:");
-  if(!username||!password||!email){ toast('username/password/email required','error'); return; }
-  const r = await fetch(BASE+'/auth/signup',{method:'POST',headers:{'content-type':'application/json'},
-              body:JSON.stringify({username,password,email})});
-  const j = await r.json().catch(()=>null);
-  if(r.ok && (j?.ok!==false)){ toast('Sign up sent. Check your inbox (Spam).'); }
-  else { toast(`Sign up failed: ${j?.error||j?.message||r.status}`, 'error'); }
-}
-async function confirmFlow(){
-  const username=$("#u").value.trim();
-  const code = prompt("Enter the 6-digit confirmation code:");
-  if(!username||!code){ toast('username/code required','error'); return; }
-  const r = await fetch(BASE+'/auth/confirm',{method:'POST',headers:{'content-type':'application/json'},
-              body:JSON.stringify({username,code})});
-  const j = await r.json().catch(()=>null);
-  if(r.ok && (j?.ok!==false)){ toast('Email confirmed! You can login now.'); }
-  else { toast(`Confirm failed: ${j?.error||j?.message||r.status}`, 'error'); }
-}
-$("#link-signup")?.addEventListener("click", signupFlow);
-$("#link-confirm")?.addEventListener("click", confirmFlow);
+    // --- signup / confirm ---
+    async function signupFlow() {
+      const username = $("#u").value.trim(), password = $("#p").value;
+      const email = prompt("Enter your email for sign-up:");
+      if (!username || !password || !email) { toast('username/password/email required', 'error'); return; }
+      const r = await fetch(BASE + '/auth/signup', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ username, password, email })
+      });
+      const j = await r.json().catch(() => null);
+      if (r.ok && (j?.ok !== false)) { toast('Sign up sent. Check your inbox (Spam).'); }
+      else { toast(`Sign up failed: ${j?.error || j?.message || r.status}`, 'error'); }
+    }
+    async function confirmFlow() {
+      const username = $("#u").value.trim();
+      const code = prompt("Enter the 6-digit confirmation code:");
+      if (!username || !code) { toast('username/code required', 'error'); return; }
+      const r = await fetch(BASE + '/auth/confirm', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ username, code })
+      });
+      const j = await r.json().catch(() => null);
+      if (r.ok && (j?.ok !== false)) { toast('Email confirmed! You can login now.'); }
+      else { toast(`Confirm failed: ${j?.error || j?.message || r.status}`, 'error'); }
+    }
+    $("#link-signup")?.addEventListener("click", signupFlow);
+    $("#link-confirm")?.addEventListener("click", confirmFlow);
 
-// --- login/logout ---
-$("#btnLogin").onclick = async ()=>{
-  const r=await fetch(BASE+'/login',{method:'POST',headers:{'content-type':'application/json'},
-    body:JSON.stringify({username:$("#u").value,password:$("#p").value})});
-  const j=await r.json().catch(()=>null);
-  if(!r.ok||!j?.authToken){toast(`Login failed${j?.error?`: ${j.error}`:''}`,'error');return;}
-  token=j.authToken;
-  localStorage.setItem("idToken", token);
-  toggleUI(true);
-  toast('Login successful');
-};
-$("#btnLogout").onclick = ()=>{
-  token=null; localStorage.removeItem("idToken"); toggleUI(false); toast('Logged out')
-};
-$("#btnTopup").onclick = async ()=>{
-  const amt = parseInt($("#topupAmt").value,10);
-  if(!Number.isInteger(amt)||amt<=0){ toast('Enter cents, e.g. 200','error'); return; }
-  const r=await guardFetch(BASE+'/accounts/topup',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({amount_cents:amt})});
-  if(!r.ok){ toast('Top up failed','error'); return; }
-  toast('Top up success'); refreshMe();
-};
-async function refreshMe(){
-  const r=await guardFetch(BASE+'/me'); const j=await r.json().catch(()=>null);
-  setBalance(j?.balance_cents||0);
-}
+    // --- login/logout ---
+    $("#btnLogin").onclick = async () => {
+      const r = await fetch(BASE + '/login', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ username: $("#u").value, password: $("#p").value })
+      });
+      const j = await r.json().catch(() => null);
+      if (!r.ok || !j?.authToken) { toast(`Login failed${j?.error ? `: ${j.error}` : ''}`, 'error'); return; }
+      token = j.authToken;
+      localStorage.setItem("idToken", token);
+      toggleUI(true);
+      toast('Login successful');
+    };
+    $("#btnLogout").onclick = () => {
+      token = null; localStorage.removeItem("idToken"); toggleUI(false); toast('Logged out')
+    };
+    $("#btnTopup").onclick = async () => {
+      const amt = parseInt($("#topupAmt").value, 10);
+      if (!Number.isInteger(amt) || amt <= 0) { toast('Enter cents, e.g. 200', 'error'); return; }
+      const r = await guardFetch(BASE + '/accounts/topup', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ amount_cents: amt }) });
+      if (!r.ok) { toast('Top up failed', 'error'); return; }
+      toast('Top up success'); refreshMe();
+    };
+    async function refreshMe() {
+      const r = await guardFetch(BASE + '/me'); const j = await r.json().catch(() => null);
+      setBalance(j?.balance_cents || 0);
+    }
 
-// --- upload ---
-$("#btnUpload").onclick = async ()=>{
-  const f=$("#file").files[0]; if(!f) return toast('Choose a video file first','error');
-  const fd=new FormData(); fd.append('file',f);
-  const r=await guardFetch(BASE+'/upload',{method:'POST',body:fd}); const j=await r.json().catch(()=>null);
-  $("#upRes").textContent=JSON.stringify(j,null,2);
-  if(j&&j.ok){toast('Upload successful'); filesPage=1; listFiles();} else toast('Upload failed','error');
-};
+    // --- upload ---
+    async function uploadFileWithRetry(file, maxRetries = 3) {
+      console.log(file.name);
+      try {
+        const data = {
+          filename: file.name,
+          size: file.size,
+          mimeType: file.type
+        };
+        // 向後端請求 presigned URL
+        const r = await guardFetch(BASE + '/upload-url', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ filename: file.name, mimeType: file.type, size: file.size })
+        });
+        const j = await r.json();
+        if (!j.ok) throw new Error('Failed to get upload URL');
+        console.log("Received presigned URL:", j.uploadUrl);
 
-// --- files ---
-$("#btnList").onclick=()=>{ filesPage=1; listFiles(); };
-$("#filesPrev").onclick=()=>{ if(filesPage>1){ filesPage--; listFiles(); } };
-$("#filesNext").onclick=()=>{ filesPage++; listFiles(); };
+        const { uploadUrl, fileId, s3Key } = j;
 
-$("#filesQ").oninput = debounce(()=>{ filesPage=1; listFiles(); }, 300);
-$("#filesSort").onchange = ()=>{ filesPage=1; listFiles(); };
-$("#filesOrder").onchange = ()=>{ filesPage=1; listFiles(); };
-$("#filesSize").onchange = ()=>{ filesPage=1; listFiles(); };
+        // 2️⃣ 上傳檔案到 S3
+        for (let attempt = 1; attempt <= maxRetries; attempt++) {
+          try {
+            const upRes = await fetch(uploadUrl, {
+              method: 'PUT',
+              headers: { 'Content-Type': file.type },
+              body: file
+            });
 
-async function listFiles(){
-  const q = encodeURIComponent($("#filesQ").value||"");
-  const sort = $("#filesSort").value;
-  const order = $("#filesOrder").value;
-  const size = parseInt($("#filesSize").value,10)||10;
+            if (!upRes.ok) throw new Error(`S3 upload failed with status ${upRes.status}`);
+            // 成功
+            $("#upRes").textContent = JSON.stringify({ fileId, s3Key, ok: true }, null, 2);
+            toast('Upload successful');
+            filesPage = 1;
+            listFiles();
+            return;
+          } catch (err) {
+            console.warn(`Upload attempt ${attempt} failed:`, err);
+            if (attempt === maxRetries) throw err;
+            await new Promise(r => setTimeout(r, 1000 * attempt)); // 指數退避
+          }
+        }
+      } catch (err) {
+        console.error('Upload failed:', err);
+        toast('Upload failed', 'error');
+      }
+    }
 
-  const r=await guardFetch(`${BASE}/files?page=${filesPage}&size=${size}&q=${q}&sort=${sort}&order=${order}`);
-  const j=await r.json().catch(()=>null);
+    // 監聽按鈕
+    $("#btnUpload").onclick = async () => {
+      const f = $("#file").files[0];
+      if (!f) return toast('Choose a video file first', 'error');
+      await uploadFileWithRetry(f, 3);
+    };
 
-  const total=j?.total||0;
-  const box=$("#files"); box.innerHTML=''; const items=j&&j.items?j.items:[];
-  if(!items.length){box.innerHTML='<div class="empty">No files yet.</div>';return;}
-  items.forEach(it=>{
-    const el=document.createElement('div'); el.className='item';
-    el.innerHTML=`
+
+
+    // $("#btnUpload").onclick = async ()=>{
+    //   const f=$("#file").files[0]; if(!f) return toast('Choose a video file first','error');
+    //   const fd=new FormData(); fd.append('file',f);
+    //   const r=await guardFetch(BASE+'/upload',{method:'POST',body:fd}); const j=await r.json().catch(()=>null);
+    //   $("#upRes").textContent=JSON.stringify(j,null,2);
+    //   if(j&&j.ok){toast('Upload successful'); filesPage=1; listFiles();} else toast('Upload failed','error');
+    // };
+
+    // --- files ---
+    $("#btnList").onclick = () => { filesPage = 1; listFiles(); };
+    $("#filesPrev").onclick = () => { if (filesPage > 1) { filesPage--; listFiles(); } };
+    $("#filesNext").onclick = () => { filesPage++; listFiles(); };
+
+    $("#filesQ").oninput = debounce(() => { filesPage = 1; listFiles(); }, 300);
+    $("#filesSort").onchange = () => { filesPage = 1; listFiles(); };
+    $("#filesOrder").onchange = () => { filesPage = 1; listFiles(); };
+    $("#filesSize").onchange = () => { filesPage = 1; listFiles(); };
+
+    async function listFiles() {
+      const q = encodeURIComponent($("#filesQ").value || "");
+      const sort = $("#filesSort").value;
+      const order = $("#filesOrder").value;
+      const size = parseInt($("#filesSize").value, 10) || 10;
+
+      const r = await guardFetch(`${BASE}/files?page=${filesPage}&size=${size}&q=${q}&sort=${sort}&order=${order}`);
+      const j = await r.json().catch(() => null);
+
+      const total = j?.total || 0;
+      const box = $("#files"); box.innerHTML = ''; const items = j && j.items ? j.items : [];
+      if (!items.length) { box.innerHTML = '<div class="empty">No files yet.</div>'; return; }
+      items.forEach(it => {
+        const el = document.createElement('div'); el.className = 'item';
+        el.innerHTML = `
       <div class="item-head">
         <div class="item-title">${escapeHtml(it.filename)}</div>
         <div class="actions">
@@ -313,199 +633,202 @@ async function listFiles(){
       </div>
       <div class="small muted">
         id: <code>${escapeHtml(it.id)}</code>
-        <span class="sep">•</span> ${Number(it.size_bytes||0)} bytes
-        <span class="sep">•</span> uploaded: ${escapeHtml(it.uploaded_at||'-')}
+        <span class="sep">•</span> ${Number(it.size_bytes || 0)} bytes
+        <span class="sep">•</span> uploaded: ${escapeHtml(it.uploaded_at || '-')}
       </div>`;
-    box.appendChild(el);
-  });
-  box.querySelectorAll('.btnTrans').forEach(b=>b.onclick=()=>transcode(b.dataset.id));
-  box.querySelectorAll('.btnDownOrig').forEach(b=>b.onclick=downloadOriginal);
-  box.querySelectorAll('.btnDel').forEach(b=>b.onclick=async ()=>{
-    if(!confirm('Delete this file?')) return;
-    await guardFetch(BASE+'/files/'+encodeURIComponent(b.dataset.id),{method:'DELETE'}); listFiles(); listJobs();
-  });
-  box.querySelectorAll('.btnSubs').forEach(b=>b.onclick=subsFetch);
-  box.querySelectorAll('.btnMeta').forEach(b=>b.onclick=showMeta);
+        box.appendChild(el);
+      });
+      box.querySelectorAll('.btnTrans').forEach(b => b.onclick = () => transcode(b.dataset.id));
+      box.querySelectorAll('.btnDownOrig').forEach(b => b.onclick = downloadOriginal);
+      box.querySelectorAll('.btnDel').forEach(b => b.onclick = async () => {
+        if (!confirm('Delete this file?')) return;
+        console.log("Deleting fileId:", b.dataset.id);
+        
+        await guardFetch(BASE + '/files/' + encodeURIComponent(b.dataset.id), { method: 'DELETE' }); listFiles(); listJobs();
+      });
+      box.querySelectorAll('.btnSubs').forEach(b => b.onclick = subsFetch);
+      box.querySelectorAll('.btnMeta').forEach(b => b.onclick = showMeta);
 
-  $("#filesPage").textContent=String(j?.page||filesPage);
-  $("#filesTotal").textContent=`Total: ${total}`;
-  const maxPage = Math.max(1, Math.ceil(total / size));
-  $("#filesPrev").disabled = (filesPage<=1);
-  $("#filesNext").disabled = (filesPage>=maxPage);
-}
+      $("#filesPage").textContent = String(j?.page || filesPage);
+      $("#filesTotal").textContent = `Total: ${total}`;
+      const maxPage = Math.max(1, Math.ceil(total / size));
+      $("#filesPrev").disabled = (filesPage <= 1);
+      $("#filesNext").disabled = (filesPage >= maxPage);
+    }
 
 
-async function downloadOriginal(e) {
-  const id = e.currentTarget.dataset.id;
-  
-  const r = await guardFetch(BASE + '/download/original/' + encodeURIComponent(id));
-  if (!r.ok) { toast('Download failed', 'error'); return; }
-  
-  const data = await r.json();           // 解析 JSON
-  const url = data.downloadUrl;          // 拿到 pre-signed URL
+    async function downloadOriginal(e) {
+      const id = e.currentTarget.dataset.id;
 
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = '';                        // S3 的 Content-Disposition 會保留原始檔名
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-}
+      const r = await guardFetch(BASE + '/download/original/' + encodeURIComponent(id));
+      if (!r.ok) { toast('Download failed', 'error'); return; }
 
-// async function downloadOriginal(e){
-//   const id=e.currentTarget.dataset.id;
-//   const r=await guardFetch(BASE+'/download/original/'+encodeURIComponent(id));
-//   if(!r.ok){toast('Download failed','error');return;}
-//   const blob=await r.blob(); const url=URL.createObjectURL(blob);
-//   const a=document.createElement('a'); a.href=url; a.download=''; a.click(); URL.revokeObjectURL(url);
-// }
+      const data = await r.json();           // 解析 JSON
+      const url = data.downloadUrl;          // 拿到 pre-signed URL
 
-// --- Subs / Meta ---
-async function subsFetch(e){
-  const id = e.currentTarget.dataset.id;
-  const card = e.currentTarget.closest('.item');
-  const titleEl = card?.querySelector('.item-title');
-  const fallback = (titleEl?.textContent || '').replace(/\.[a-z0-9]+$/i,'').trim();
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = '';                        // S3 的 Content-Disposition 會保留原始檔名
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+    }
 
-  const query = prompt('Search subtitles (title/keywords):', fallback);
-  if (!query) return;
+    // async function downloadOriginal(e){
+    //   const id=e.currentTarget.dataset.id;
+    //   const r=await guardFetch(BASE+'/download/original/'+encodeURIComponent(id));
+    //   if(!r.ok){toast('Download failed','error');return;}
+    //   const blob=await r.blob(); const url=URL.createObjectURL(blob);
+    //   const a=document.createElement('a'); a.href=url; a.download=''; a.click(); URL.revokeObjectURL(url);
+    // }
 
-  const r = await guardFetch(`${BASE}/files/${encodeURIComponent(id)}/subs`, {
-    method:'POST',
-    headers:{'content-type':'application/json'},
-    body: JSON.stringify({ query, languages:['en','zh','zh-CN','zh-TW'] })
-  });
-  if (!r.ok) {
-    let msg = 'OpenSubtitles fetch failed';
-    try { const j = await r.json(); if (j?.error) msg += `: ${j.error}` } catch {}
-    toast(msg,'error'); return;
-  }
-  toast('Subtitles metadata saved (see Meta)');
-}
+    // --- Subs / Meta ---
+    async function subsFetch(e) {
+      const id = e.currentTarget.dataset.id;
+      const card = e.currentTarget.closest('.item');
+      const titleEl = card?.querySelector('.item-title');
+      const fallback = (titleEl?.textContent || '').replace(/\.[a-z0-9]+$/i, '').trim();
 
-async function showMeta(e){
-  const id = e.currentTarget.dataset.id;
-  const r = await guardFetch(`${BASE}/files/${encodeURIComponent(id)}/meta`);
-  if(!r.ok){ toast('Failed to load metadata','error'); return; }
-  const j = await r.json().catch(()=>null);
-  const meta = j?.meta || null;
+      const query = prompt('Search subtitles (title/keywords):', fallback);
+      if (!query) return;
 
-  const w = window.open('', '_blank', 'width=800,height=600');
-  w.document.write(
-    '<pre style="font-family:ui-monospace,Menlo,Consolas,monospace;white-space:pre-wrap;">'
-    + (escapeHtml(JSON.stringify(meta,null,2)) || '(empty)')
-    + '</pre>'
-  );
-}
+      const r = await guardFetch(`${BASE}/files/${encodeURIComponent(id)}/subs`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ query, languages: ['en', 'zh', 'zh-CN', 'zh-TW'] })
+      });
+      if (!r.ok) {
+        let msg = 'OpenSubtitles fetch failed';
+        try { const j = await r.json(); if (j?.error) msg += `: ${j.error}` } catch { }
+        toast(msg, 'error'); return;
+      }
+      toast('Subtitles metadata saved (see Meta)');
+    }
 
-// --- jobs ---
-$("#btnJobs").onclick=()=>{ jobsPage=1; listJobs(); };
-$("#jobsPrev").onclick=()=>{ if(jobsPage>1){ jobsPage--; listJobs(); } };
-$("#jobsNext").onclick=()=>{ jobsPage++; listJobs(); };
+    async function showMeta(e) {
+      const id = e.currentTarget.dataset.id;
+      const r = await guardFetch(`${BASE}/files/${encodeURIComponent(id)}/meta`);
+      if (!r.ok) { toast('Failed to load metadata', 'error'); return; }
+      const j = await r.json().catch(() => null);
+      const meta = j?.meta || null;
 
-$("#jobStatus").onchange = ()=>{ jobsPage=1; listJobs(); };
-$("#jobsSort").onchange = ()=>{ jobsPage=1; listJobs(); };
-$("#jobsOrder").onchange = ()=>{ jobsPage=1; listJobs(); };
-$("#jobsSize").onchange = ()=>{ jobsPage=1; listJobs(); };
+      const w = window.open('', '_blank', 'width=800,height=600');
+      w.document.write(
+        '<pre style="font-family:ui-monospace,Menlo,Consolas,monospace;white-space:pre-wrap;">'
+        + (escapeHtml(JSON.stringify(meta, null, 2)) || '(empty)')
+        + '</pre>'
+      );
+    }
 
-async function transcode(fileId){
-  const fmtEl=document.getElementById('fmt-'+fileId);
-  const format = fmtEl ? fmtEl.value : 'mp4';
-  const r=await guardFetch(BASE+'/transcode/'+encodeURIComponent(fileId),{
-    method:'POST',headers:{'content-type':'application/json'},
-    body:JSON.stringify({ preset:'slow', crf:22, scale:'1280:720', format })
-  });
-  if(r.status===402){ toast('Insufficient funds. Please top up.', 'error'); return; }
-  const j=await r.json().catch(()=>null);
-  if(!r.ok||!j?.ok){toast('Transcode failed','error');return;}
-  toast(`Transcode started → ${format}`);
-  refreshMe();
-  listJobs();
-}
+    // --- jobs ---
+    $("#btnJobs").onclick = () => { jobsPage = 1; listJobs(); };
+    $("#jobsPrev").onclick = () => { if (jobsPage > 1) { jobsPage--; listJobs(); } };
+    $("#jobsNext").onclick = () => { jobsPage++; listJobs(); };
 
-async function listJobs(){
-  const status = $("#jobStatus").value;
-  const sort = $("#jobsSort").value;
-  const order = $("#jobsOrder").value;
-  const size = parseInt($("#jobsSize").value,10)||10;
+    $("#jobStatus").onchange = () => { jobsPage = 1; listJobs(); };
+    $("#jobsSort").onchange = () => { jobsPage = 1; listJobs(); };
+    $("#jobsOrder").onchange = () => { jobsPage = 1; listJobs(); };
+    $("#jobsSize").onchange = () => { jobsPage = 1; listJobs(); };
 
-  const r=await guardFetch(`${BASE}/jobs?page=${jobsPage}&size=${size}&sort=${sort}&order=${order}${status?`&status=${status}`:''}`);
-  const j=await r.json().catch(()=>null);
+    async function transcode(fileId) {
+      const fmtEl = document.getElementById('fmt-' + fileId);
+      const format = fmtEl ? fmtEl.value : 'mp4';
+      const r = await guardFetch(BASE + '/transcode/' + encodeURIComponent(fileId), {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ preset: 'slow', crf: 22, scale: '1280:720', format })
+      });
+      if (r.status === 402) { toast('Insufficient funds. Please top up.', 'error'); return; }
+      const j = await r.json().catch(() => null);
+      if (!r.ok || !j?.ok) { toast('Transcode failed', 'error'); return; }
+      toast(`Transcode started → ${format}`);
+      refreshMe();
+      listJobs();
+    }
 
-  const total=j?.total||0;
-  const box=$("#jobs"); box.innerHTML=''; const items=j&&j.items?j.items:[];
-  if(!items.length){box.innerHTML='<div class="empty">No jobs yet.</div>';return;}
-  items.forEach(job=>{
-    const status=String(job.status||'').toLowerCase();
-    const kind=status==='completed'?'success':status==='failed'?'danger':'warn';
-    const row=document.createElement('div'); row.className='item';
-    row.innerHTML=`
+    async function listJobs() {
+      const status = $("#jobStatus").value;
+      const sort = $("#jobsSort").value;
+      const order = $("#jobsOrder").value;
+      const size = parseInt($("#jobsSize").value, 10) || 10;
+
+      const r = await guardFetch(`${BASE}/jobs?page=${jobsPage}&size=${size}&sort=${sort}&order=${order}${status ? `&status=${status}` : ''}`);
+      const j = await r.json().catch(() => null);
+
+      const total = j?.total || 0;
+      const box = $("#jobs"); box.innerHTML = ''; const items = j && j.items ? j.items : [];
+      if (!items.length) { box.innerHTML = '<div class="empty">No jobs yet.</div>'; return; }
+      items.forEach(job => {
+        const status = String(job.status || '').toLowerCase();
+        const kind = status === 'completed' ? 'success' : status === 'failed' ? 'danger' : 'warn';
+        const row = document.createElement('div'); row.className = 'item';
+        row.innerHTML = `
       <div class="item-head">
         <div class="item-title">Job <code>${escapeHtml(job.id)}</code></div>
         <div class="actions">
-          <span class="pill ${kind}">${status==='running'?'<span class="spinner"></span> ':''}${escapeHtml(status)}</span>
-          ${status==='completed'?`<button class="btn success btnDownTc" data-id="${job.id}">Download output</button>`:''}
-          ${status==='completed' && job.has_thumbnail?`<button class="btn secondary btnThumb" data-id="${job.id}">Thumbnail</button>`:''}
+          <span class="pill ${kind}">${status === 'running' ? '<span class="spinner"></span> ' : ''}${escapeHtml(status)}</span>
+          ${status === 'completed' ? `<button class="btn success btnDownTc" data-id="${job.id}">Download output</button>` : ''}
+          ${status === 'completed' && job.has_thumbnail ? `<button class="btn secondary btnThumb" data-id="${job.id}">Thumbnail</button>` : ''}
           <button class="btn secondary btnLogs" data-id="${job.id}">Logs</button>
         </div>
       </div>
       <div class="small muted">
-        progress: ${(job.progress??0).toFixed(0)}%
-        <span class="sep">•</span> updated: ${escapeHtml(job.updated_at||'-')}
-        <span class="sep">•</span> charged/refunded: ${(job.charged_cents/100).toFixed(2)} / ${(job.refunded_cents/100).toFixed(2)}
+        progress: ${(job.progress ?? 0).toFixed(0)}%
+        <span class="sep">•</span> updated: ${escapeHtml(job.updated_at || '-')}
+        <span class="sep">•</span> charged/refunded: ${(job.charged_cents / 100).toFixed(2)} / ${(job.refunded_cents / 100).toFixed(2)}
       </div>`;
-    box.appendChild(row);
-  });
-  box.querySelectorAll('.btnDownTc').forEach(b=>b.onclick=downloadOutput);
-  box.querySelectorAll('.btnLogs').forEach(b=>b.onclick=showLogs);
-  box.querySelectorAll('.btnThumb').forEach(b=>b.onclick=showThumb);
+        box.appendChild(row);
+      });
+      box.querySelectorAll('.btnDownTc').forEach(b => b.onclick = downloadOutput);
+      box.querySelectorAll('.btnLogs').forEach(b => b.onclick = showLogs);
+      box.querySelectorAll('.btnThumb').forEach(b => b.onclick = showThumb);
 
-  $("#jobsPage").textContent=String(j?.page||jobsPage);
-  $("#jobsTotal").textContent=`Total: ${total}`;
-  const maxPage = Math.max(1, Math.ceil(total / size));
-  $("#jobsPrev").disabled = (jobsPage<=1);
-  $("#jobsNext").disabled = (jobsPage>=maxPage);
-}
+      $("#jobsPage").textContent = String(j?.page || jobsPage);
+      $("#jobsTotal").textContent = `Total: ${total}`;
+      const maxPage = Math.max(1, Math.ceil(total / size));
+      $("#jobsPrev").disabled = (jobsPage <= 1);
+      $("#jobsNext").disabled = (jobsPage >= maxPage);
+    }
 
-async function showLogs(e){
-  const jobId=e.currentTarget.dataset.id;
-  const r=await guardFetch(BASE+'/jobs/'+encodeURIComponent(jobId)+'/logs');
-  const text=await r.text();
-  const w=window.open('','_blank','width=800,height=600');
-  w.document.write('<pre style="font-family:ui-monospace,Menlo,Consolas,monospace;white-space:pre-wrap;">'+(escapeHtml(text)||'(empty)')+'</pre>');
-}
-async function showThumb(e){
-  const jobId=e.currentTarget.dataset.id;
-  window.open(`${BASE}/jobs/${encodeURIComponent(jobId)}/thumbnail`,'_blank','width=800,height=600');
-}
-async function downloadOutput(e){
-  const jobId=e.currentTarget.dataset.id;
-  const r=await guardFetch(BASE+'/download/transcoded/'+encodeURIComponent(jobId));
-  if(r.status===409){ toast('Output not ready yet','error'); return; }
-  if(!r.ok){ toast('Download failed','error'); return; }
-    
-  const data = await r.json();           // 解析 JSON
-  const url = data.downloadUrl;          // 拿到 pre-signed URL
+    async function showLogs(e) {
+      const jobId = e.currentTarget.dataset.id;
+      const r = await guardFetch(BASE + '/jobs/' + encodeURIComponent(jobId) + '/logs');
+      const text = await r.text();
+      const w = window.open('', '_blank', 'width=800,height=600');
+      w.document.write('<pre style="font-family:ui-monospace,Menlo,Consolas,monospace;white-space:pre-wrap;">' + (escapeHtml(text) || '(empty)') + '</pre>');
+    }
+    async function showThumb(e) {
+      const jobId = e.currentTarget.dataset.id;
+      window.open(`${BASE}/jobs/${encodeURIComponent(jobId)}/thumbnail`, '_blank', 'width=800,height=600');
+    }
+    async function downloadOutput(e) {
+      const jobId = e.currentTarget.dataset.id;
+      const r = await guardFetch(BASE + '/download/transcoded/' + encodeURIComponent(jobId));
+      if (r.status === 409) { toast('Output not ready yet', 'error'); return; }
+      if (!r.ok) { toast('Download failed', 'error'); return; }
 
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = '';                        // S3 的 Content-Disposition 會保留原始檔名
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
+      const data = await r.json();           // 解析 JSON
+      const url = data.downloadUrl;          // 拿到 pre-signed URL
 
-}
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = '';                        // S3 的 Content-Disposition 會保留原始檔名
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
 
-// --- Initial: Attempt to reuse the local token ---
-(function initAuthFromStorage(){
-  const saved = localStorage.getItem("idToken");
-  if (saved) {
-    token = saved;
-    toggleUI(true);
-  } else {
-    toggleUI(false);
-  }
-})();
-</script>
+    }
+
+    // --- Initial: Attempt to reuse the local token ---
+    (function initAuthFromStorage() {
+      const saved = localStorage.getItem("idToken");
+      if (saved) {
+        token = saved;
+        toggleUI(true);
+      } else {
+        toggleUI(false);
+      }
+    })();
+  </script>
 </body>
+
 </html>
