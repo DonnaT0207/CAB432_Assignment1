@@ -110,6 +110,37 @@
       </section>
     </div>
 
+    <!-- 3A) All users' files (admin only) -->
+    <section class="card" id="adminSection" style="display:none;">
+      <div class="section-head">
+        <h2>3A) All users' files (admin)</h2>
+        <div class="actions">
+          <input id="adminFilesQ" type="text" placeholder="Search filename or owner..." style="min-width:200px" disabled>
+          <select id="adminFilesSort" disabled>
+            <option value="uploaded_at">Uploaded time</option>
+            <option value="size_bytes">Size</option>
+            <option value="filename">Filename</option>
+            <option value="owner">Owner</option>
+          </select>
+          <select id="adminFilesOrder" disabled>
+            <option value="desc">Desc</option>
+            <option value="asc">Asc</option>
+          </select>
+          <select id="adminFilesSize" disabled>
+            <option value="5">5</option><option value="10" selected>10</option><option value="20">20</option>
+          </select>
+          <button id="btnAdminList" class="btn secondary" disabled>Refresh</button>
+        </div>
+      </div>
+      <div id="adminFiles" class="list"></div>
+      <div class="pager">
+        <button id="adminFilesPrev" class="btn secondary" disabled>Prev</button>
+        <span class="small">Page <b id="adminFilesPage">1</b></span>
+        <button id="adminFilesNext" class="btn secondary" disabled>Next</button>
+        <span class="small" id="adminFilesTotal" style="opacity:.7"></span>
+      </div>
+    </section>
+
     <!-- 3) Files -->
     <section class="card">
       <div class="section-head">
@@ -219,8 +250,8 @@
 // --- state & utils ---
 const BASE = location.origin;
 let token = null, jobsInterval = null;
-let filesPage=1, jobsPage=1;
-let isAdmin = false, adminFilesPage = 1;
+let filesPage=1, jobsPage=1, adminFilesPage=1;
+let isAdmin = false;
 
 
 const $ = (q)=>document.querySelector(q);
@@ -229,43 +260,12 @@ d.className=`toast ${type}`;d.textContent=msg;w.appendChild(d);setTimeout(()=>d.
 function setAuthPill(text,kind){const p=$("#authState");p.className=`pill ${kind}`;
 p.innerHTML=`${kind==='warn'?'<span class="spinner"></span> ':''}${text}`}
 
-function toggleUI(on){
-  $("#file").disabled=!on; $("#btnUpload").disabled=!on; $("#btnList").disabled=!on;
-  $("#btnJobs").disabled=!on; $("#btnLogout").disabled=!on; $("#btnLogin").disabled=on; $("#btnTopup").disabled=!on;
-  $("#autoJobs").disabled=!on;
-  ["filesQ","filesSort","filesOrder","filesSize","jobStatus","jobsSort","jobsOrder","jobsSize"].forEach(id=>{
-    $("#"+id).disabled=!on
-  });
-
-  // admin controls (enable/disable; the section visibility is handled after /me)
-  ["adminFilesQ","adminFilesSort","adminFilesOrder","adminFilesSize"].forEach(id=>{
-    const el = $("#"+id); if (el) el.disabled=!on;
-  });
-  const btnAdminList = $("#btnAdminList"); if (btnAdminList) btnAdminList.disabled=!on;
-
-  $("#tok").textContent=on?(token.slice(0,24)+'...'):'-';
-
-  if(!on){
-    setAuthPill('Not logged in','warn');
-    $("#files").innerHTML=''; $("#jobs").innerHTML='';
-    clearInterval(jobsInterval); setBalance(0);
-    isAdmin = false;
-    const sec = $("#adminSection"); if (sec) sec.style.display = "none";
-  }else{
-    setAuthPill('Logged in','success');
-    refreshMe();    // this will decide whether to show admin section
-    listFiles(); listJobs();
-    jobsInterval=setInterval(()=>token&&listJobs(),5000)
-  }
-}
-
-
-function authHeaders(){return token?{Authorization:'Bearer '+token}:{}} 
-async function guardFetch(url,opts={}){const r=await fetch(url,{...opts,headers:{...(opts.headers||{}),...authHeaders()}});
-if(r.status===401){token=null;localStorage.removeItem("idToken");toggleUI(false);toast('Unauthorized','error');throw new Error('Unauthorized')} return r}
 function escapeHtml(s){return (s==null)?'':String(s).replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;').replaceAll("'",'&#39;')}
 function setBalance(cents){ $("#bal").textContent=(Number(cents||0)/100).toFixed(2); }
 function debounce(fn, delay=300){ let t; return (...args)=>{ clearTimeout(t); t=setTimeout(()=>fn(...args), delay); }; }
+function authHeaders(){return token?{Authorization:'Bearer '+token}:{}} 
+async function guardFetch(url,opts={}){const r=await fetch(url,{...opts,headers:{...(opts.headers||{}),...authHeaders()}});
+if(r.status===401){token=null;localStorage.removeItem("idToken");toggleUI(false);toast('Unauthorized','error');throw new Error('Unauthorized')} return r}
 
 // --- signup / confirm ---
 async function signupFlow(){
@@ -299,42 +299,86 @@ $("#btnLogin").onclick = async ()=>{
   if(!r.ok||!j?.authToken){toast(`Login failed${j?.error?`: ${j.error}`:''}`,'error');return;}
   token=j.authToken;
   localStorage.setItem("idToken", token);
-  toggleUI(true);
+
+  await checkAdminStatus();      // 先检测管理员身份（/auth/whoami）
+  toggleUI(true);                // 打开 UI
   toast('Login successful');
 };
+
 $("#btnLogout").onclick = ()=>{
   token=null; localStorage.removeItem("idToken"); toggleUI(false); toast('Logged out')
 };
-$("#btnTopup").onclick = async ()=>{
-  const amt = parseInt($("#topupAmt").value,10);
-  if(!Number.isInteger(amt)||amt<=0){ toast('Enter cents, e.g. 200','error'); return; }
-  const r=await guardFetch(BASE+'/accounts/topup',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({amount_cents:amt})});
-  if(!r.ok){ toast('Top up failed','error'); return; }
-  toast('Top up success'); refreshMe();
-};
 
+async function checkAdminStatus() {
+  try {
+    const r = await guardFetch(BASE+'/auth/whoami');
+    if (r.ok) {
+      const j = await r.json();
+      isAdmin = !!(j.user && j.user.admin);
+    } else {
+      isAdmin = false;
+    }
+  } catch (e) {
+    console.error('Failed to check admin status:', e);
+    isAdmin = false;
+  }
+}
+
+// --- UI on/off （根据 isAdmin 控制 3A 的显示/可用性）---
+function toggleUI(on){
+  $("#file").disabled=!on;$("#btnUpload").disabled=!on;$("#btnList").disabled=!on;
+  $("#btnJobs").disabled=!on;$("#btnLogout").disabled=!on;$("#btnLogin").disabled=on;$("#btnTopup").disabled=!on;
+  $("#autoJobs").disabled=!on;["filesQ","filesSort","filesOrder","filesSize","jobStatus","jobsSort","jobsOrder","jobsSize"].forEach(id=>{$("#"+id).disabled=!on});
+  $("#tok").textContent=on?(token.slice(0,24)+'...'):'-';
+
+  // 管理员区显示/隐藏与控件状态
+  if (isAdmin && on) {
+    $("#adminSection").style.display = 'block';
+    $("#btnAdminList").disabled = !on;
+    ["adminFilesQ","adminFilesSort","adminFilesOrder","adminFilesSize"].forEach(id=>{$("#"+id).disabled=!on});
+  } else {
+    $("#adminSection").style.display = 'none';
+    $("#btnAdminList").disabled = true;
+    ["adminFilesQ","adminFilesSort","adminFilesOrder","adminFilesSize"].forEach(id=>{$("#"+id).disabled=true});
+  }
+
+  if(!on){
+    setAuthPill('Not logged in','warn');
+    $("#files").innerHTML='';$("#jobs").innerHTML='';$("#adminFiles").innerHTML='';
+    clearInterval(jobsInterval);setBalance(0);
+  }else{
+    setAuthPill('Logged in','success');
+    refreshMe();               // 拉取余额与（再次）确认 admin，并按需加载 3A 列表
+    listFiles(); listJobs();
+    jobsInterval=setInterval(()=>token&&listJobs(),5000)
+  }
+}
+
+// --- 余额/身份信息（不会再调用 toggleUI，避免循环）---
 
 async function refreshMe(){
   const r = await guardFetch(BASE+'/me');
   const j = await r.json().catch(()=>null);
   setBalance(j?.balance_cents||0);
 
+  // 以 /me 返回为准更新 isAdmin 并更新 3A 区显示
   isAdmin = !!j?.admin;
-  const sec = $("#adminSection");
-  if (sec) sec.style.display = isAdmin ? "block" : "none";
-
-  // Enable the “Refresh” button only for admins
-  const btnAdminList = $("#btnAdminList");
-  if (btnAdminList) btnAdminList.disabled = !isAdmin;
-
-  if (isAdmin) {
-    adminFilesPage = 1;
-    listAdminFiles();
+  const adminSec = document.getElementById("adminSection");
+  if (adminSec){
+    if (isAdmin){
+      adminSec.style.display='block';
+      ["adminFilesQ","adminFilesSort","adminFilesOrder","adminFilesSize","btnAdminList"].forEach(id=>{const el=document.getElementById(id); if(el) el.disabled=false;});
+      adminFilesPage=1; listAdminFiles(); // 初次加载
+    }else{
+      adminSec.style.display='none';
+      ["adminFilesQ","adminFilesSort","adminFilesOrder","adminFilesSize","btnAdminList"].forEach(id=>{const el=document.getElementById(id); if(el) el.disabled=true;});
+      $("#adminFiles").innerHTML='';
+    }
   }
 }
 
+// --- Upload ---
 
-// --- upload ---
 $("#btnUpload").onclick = async ()=>{
   const f=$("#file").files[0]; if(!f) return toast('Choose a video file first','error');
   const fd=new FormData(); fd.append('file',f);
@@ -343,11 +387,10 @@ $("#btnUpload").onclick = async ()=>{
   if(j&&j.ok){toast('Upload successful'); filesPage=1; listFiles();} else toast('Upload failed','error');
 };
 
-// --- files ---
+// --- Files (self) ---
 $("#btnList").onclick=()=>{ filesPage=1; listFiles(); };
 $("#filesPrev").onclick=()=>{ if(filesPage>1){ filesPage--; listFiles(); } };
 $("#filesNext").onclick=()=>{ filesPage++; listFiles(); };
-
 $("#filesQ").oninput = debounce(()=>{ filesPage=1; listFiles(); }, 300);
 $("#filesSort").onchange = ()=>{ filesPage=1; listFiles(); };
 $("#filesOrder").onchange = ()=>{ filesPage=1; listFiles(); };
@@ -460,31 +503,36 @@ async function listFiles(){
   $("#filesNext").disabled = (filesPage>=maxPage);
 }
 
-
 async function downloadOriginal(e) {
   const id = e.currentTarget.dataset.id;
-  
   const r = await guardFetch(BASE + '/download/original/' + encodeURIComponent(id));
   if (!r.ok) { toast('Download failed', 'error'); return; }
-  
-  const data = await r.json();           // 解析 JSON
-  const url = data.downloadUrl;          // 拿到 pre-signed URL
-
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = '';                        // S3 的 Content-Disposition 會保留原始檔名
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
+  const data = await r.json();
+  const url = data.downloadUrl;
+  const a = document.createElement('a'); a.href = url; a.download = '';
+  document.body.appendChild(a); a.click(); a.remove();
 }
 
-// async function downloadOriginal(e){
-//   const id=e.currentTarget.dataset.id;
-//   const r=await guardFetch(BASE+'/download/original/'+encodeURIComponent(id));
-//   if(!r.ok){toast('Download failed','error');return;}
-//   const blob=await r.blob(); const url=URL.createObjectURL(blob);
-//   const a=document.createElement('a'); a.href=url; a.download=''; a.click(); URL.revokeObjectURL(url);
-// }
+// --- top up ---
+$("#btnTopup").onclick = async ()=>{
+  if(!token){ toast('Please login first','error'); return; }
+  const cents = parseInt($("#topupAmt").value, 10);
+  if(!Number.isInteger(cents) || cents <= 0){ toast('Invalid amount','error'); return; }
+
+  const r = await guardFetch(BASE+'/accounts/topup',{
+    method:'POST',
+    headers:{'content-type':'application/json'},
+    body: JSON.stringify({ amount_cents: cents })
+  });
+  const j = await r.json().catch(()=>null);
+  if(r.ok && (j?.ok!==false)){
+    toast(`Topped up $${(cents/100).toFixed(2)}`);
+    refreshMe();
+  }else{
+    toast(`Top up failed: ${j?.error||j?.message||r.status}`,'error');
+  }
+};
+
 
 // --- Subs / Meta ---
 async function subsFetch(e){
@@ -508,27 +556,21 @@ async function subsFetch(e){
   }
   toast('Subtitles metadata saved (see Meta)');
 }
-
 async function showMeta(e){
   const id = e.currentTarget.dataset.id;
   const r = await guardFetch(`${BASE}/files/${encodeURIComponent(id)}/meta`);
   if(!r.ok){ toast('Failed to load metadata','error'); return; }
   const j = await r.json().catch(()=>null);
   const meta = j?.meta || null;
-
   const w = window.open('', '_blank', 'width=800,height=600');
-  w.document.write(
-    '<pre style="font-family:ui-monospace,Menlo,Consolas,monospace;white-space:pre-wrap;">'
-    + (escapeHtml(JSON.stringify(meta,null,2)) || '(empty)')
-    + '</pre>'
-  );
+  w.document.write('<pre style="font-family:ui-monospace,Menlo,Consolas,monospace;white-space:pre-wrap;">'
+    + (escapeHtml(JSON.stringify(meta,null,2)) || '(empty)') + '</pre>');
 }
 
-// --- jobs ---
+// --- Jobs ---
 $("#btnJobs").onclick=()=>{ jobsPage=1; listJobs(); };
 $("#jobsPrev").onclick=()=>{ if(jobsPage>1){ jobsPage--; listJobs(); } };
 $("#jobsNext").onclick=()=>{ jobsPage++; listJobs(); };
-
 $("#jobStatus").onchange = ()=>{ jobsPage=1; listJobs(); };
 $("#jobsSort").onchange = ()=>{ jobsPage=1; listJobs(); };
 $("#jobsOrder").onchange = ()=>{ jobsPage=1; listJobs(); };
@@ -545,19 +587,15 @@ async function transcode(fileId){
   const j=await r.json().catch(()=>null);
   if(!r.ok||!j?.ok){toast('Transcode failed','error');return;}
   toast(`Transcode started → ${format}`);
-  refreshMe();
-  listJobs();
+  refreshMe(); listJobs();
 }
-
 async function listJobs(){
   const status = $("#jobStatus").value;
   const sort = $("#jobsSort").value;
   const order = $("#jobsOrder").value;
   const size = parseInt($("#jobsSize").value,10)||10;
-
   const r=await guardFetch(`${BASE}/jobs?page=${jobsPage}&size=${size}&sort=${sort}&order=${order}${status?`&status=${status}`:''}`);
   const j=await r.json().catch(()=>null);
-
   const total=j?.total||0;
   const box=$("#jobs"); box.innerHTML=''; const items=j&&j.items?j.items:[];
   if(!items.length){box.innerHTML='<div class="empty">No jobs yet.</div>';return;}
@@ -592,7 +630,6 @@ async function listJobs(){
   $("#jobsPrev").disabled = (jobsPage<=1);
   $("#jobsNext").disabled = (jobsPage>=maxPage);
 }
-
 async function showLogs(e){
   const jobId=e.currentTarget.dataset.id;
   const r=await guardFetch(BASE+'/jobs/'+encodeURIComponent(jobId)+'/logs');
@@ -609,24 +646,66 @@ async function downloadOutput(e){
   const r=await guardFetch(BASE+'/download/transcoded/'+encodeURIComponent(jobId));
   if(r.status===409){ toast('Output not ready yet','error'); return; }
   if(!r.ok){ toast('Download failed','error'); return; }
-    
-  const data = await r.json();           // 解析 JSON
-  const url = data.downloadUrl;          // 拿到 pre-signed URL
 
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = '';                        // S3 的 Content-Disposition 會保留原始檔名
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-
+  const data = await r.json();
+  const url = data.downloadUrl;
+  const a = document.createElement('a'); a.href = url; a.download = '';
+  document.body.appendChild(a); a.click(); a.remove();
 }
 
-// --- Initial: Attempt to reuse the local token ---
-(function initAuthFromStorage(){
+// --- Admin files (3A) ---
+$("#btnAdminList").onclick=()=>{ adminFilesPage=1; listAdminFiles(); };
+$("#adminFilesPrev").onclick=()=>{ if(adminFilesPage>1){ adminFilesPage--; listAdminFiles(); } };
+$("#adminFilesNext").onclick=()=>{ adminFilesPage++; listAdminFiles(); };
+$("#adminFilesQ").oninput = debounce(()=>{ adminFilesPage=1; listAdminFiles(); }, 300);
+$("#adminFilesSort").onchange = ()=>{ adminFilesPage=1; listAdminFiles(); };
+$("#adminFilesOrder").onchange = ()=>{ adminFilesPage=1; listAdminFiles(); };
+$("#adminFilesSize").onchange = ()=>{ adminFilesPage=1; listAdminFiles(); };
+
+async function listAdminFiles() {
+  if (!isAdmin) return;
+  const q = encodeURIComponent($("#adminFilesQ").value||"");
+  const sort = $("#adminFilesSort").value;
+  const order = $("#adminFilesOrder").value;
+  const size = parseInt($("#adminFilesSize").value,10)||10;
+
+  const r=await guardFetch(`${BASE}/admin/files?page=${adminFilesPage}&size=${size}&q=${q}&sort=${sort}&order=${order}`);
+  if (r.status===403){ $("#adminSection").style.display='none'; return; }
+  const j=await r.json().catch(()=>null);
+
+  const total=j?.total||0;
+  const box=$("#adminFiles"); box.innerHTML=''; const items=j&&j.items?j.items:[];
+  if(!items.length){box.innerHTML='<div class="empty">No files found.</div>';return;}
+  items.forEach(it=>{
+    const el=document.createElement('div'); el.className='item';
+    el.innerHTML=`
+      <div class="item-head">
+        <div class="item-title">${escapeHtml(it.filename)}</div>
+        <div class="actions">
+          <span class="pill">Owner: ${escapeHtml(it.owner)}</span>
+        </div>
+      </div>
+      <div class="small muted">
+        id: <code>${escapeHtml(it.id)}</code>
+        <span class="sep">•</span> ${Number(it.size_bytes||0)} bytes
+        <span class="sep">•</span> uploaded: ${escapeHtml(it.uploaded_at||'-')}
+      </div>`;
+    box.appendChild(el);
+  });
+  $("#adminFilesPage").textContent=String(j?.page||adminFilesPage);
+  $("#adminFilesTotal").textContent=`Total: ${total}`;
+  const maxPage = Math.max(1, Math.ceil(total / size));
+  $("#adminFilesPrev").disabled = (adminFilesPage<=1);
+  $("#adminFilesNext").disabled = (adminFilesPage>=maxPage);
+}
+
+// --- Init: try existing token ---
+(async function initAuthFromStorage(){
   const saved = localStorage.getItem("idToken");
   if (saved) {
     token = saved;
+    await checkAdminStatus();
+
     toggleUI(true);
   } else {
     toggleUI(false);

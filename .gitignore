@@ -8,3 +8,18 @@ data/
 # sensitive/large files
 *.pem
 *.webm
+
+# large or local-only
+uploads/
+node_modules/
+*.mp4
+*.mov
+*.mkv
+*.zip
+
+# large/local-only
+uploads/
+*.mp4
+*.mov
+*.mkv
+*.zip
