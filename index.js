@@ -94,133 +94,7 @@ const DATA_DIR = safeDir(path.join(process.cwd(), "data"));
 const UP_DIR = path.join(DATA_DIR, "uploads");
 const OUT_DIR = path.join(DATA_DIR, "outputs");
 const THUMB_DIR = path.join(OUT_DIR, "thumbs");
-<<<<<<< HEAD
-for (const d of [UP_DIR, OUT_DIR, THUMB_DIR])
-  fs.mkdirSync(d, { recursive: true });
-
-// ----- database -----
-const DB_FILE = path.join(DATA_DIR, "app.db");
-const db = new Database(DB_FILE);
-db.pragma("journal_mode = WAL");
-db.pragma("foreign_keys = ON");
-
-db.exec(`
-CREATE TABLE IF NOT EXISTS accounts (
-  owner TEXT PRIMARY KEY,
-  balance_cents INTEGER NOT NULL DEFAULT 0,
-  updated_at TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS files (
-  id TEXT PRIMARY KEY,
-  owner TEXT NOT NULL,
-  filename TEXT NOT NULL,
-  stored_path TEXT NOT NULL,
-  size_bytes INTEGER NOT NULL,
-  mime TEXT,
-  uploaded_at TEXT NOT NULL,
-  ext_meta TEXT
-);
-
-CREATE TABLE IF NOT EXISTS jobs (
-  id TEXT PRIMARY KEY,
-  owner TEXT NOT NULL,
-  file_id TEXT NOT NULL,
-  status TEXT NOT NULL,
-  params TEXT NOT NULL,
-  progress REAL NOT NULL DEFAULT 0,
-  log TEXT NOT NULL DEFAULT '',
-  charged_cents INTEGER NOT NULL DEFAULT 0,
-  refunded_cents INTEGER NOT NULL DEFAULT 0,
-  output_path TEXT,
-  output_name TEXT,
-  thumbnail_path TEXT,
-  thumbnail_name TEXT,
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL,
-  FOREIGN KEY (file_id) REFERENCES files(id) ON DELETE CASCADE
-);
-
-CREATE INDEX IF NOT EXISTS idx_jobs_updated_at ON jobs(updated_at);
-`);
-
-function columnExists(table, col) {
-  return db
-    .prepare(`PRAGMA table_info(${table})`)
-    .all()
-    .some((c) => c.name === col);
-}
-function fkExists(table, refTable) {
-  return db
-    .prepare(`PRAGMA foreign_key_list(${table})`)
-    .all()
-    .some((r) => r.table === refTable);
-}
-
-// minimal migrations
-(function migrate() {
-  if (!columnExists("files", "ext_meta"))
-    db.exec(`ALTER TABLE files ADD COLUMN ext_meta TEXT;`);
-  for (const c of [
-    ["thumbnail_path", "TEXT"],
-    ["thumbnail_name", "TEXT"],
-    ["progress", "REAL NOT NULL DEFAULT 0"],
-    ["log", "TEXT NOT NULL DEFAULT ''"],
-    ["charged_cents", "INTEGER NOT NULL DEFAULT 0"],
-    ["refunded_cents", "INTEGER NOT NULL DEFAULT 0"],
-    ["output_path", "TEXT"],
-    ["output_name", "TEXT"],
-  ]) {
-    if (!columnExists("jobs", c[0]))
-      db.exec(`ALTER TABLE jobs ADD COLUMN ${c[0]} ${c[1]};`);
-  }
-  if (!fkExists("jobs", "files")) {
-    db.exec("PRAGMA foreign_keys=OFF;");
-    db.exec(`
-      CREATE TABLE IF NOT EXISTS jobs_new (
-        id TEXT PRIMARY KEY,
-        owner TEXT NOT NULL,
-        file_id TEXT NOT NULL,
-        status TEXT NOT NULL,
-        params TEXT NOT NULL,
-        progress REAL NOT NULL DEFAULT 0,
-        log TEXT NOT NULL DEFAULT '',
-        charged_cents INTEGER NOT NULL DEFAULT 0,
-        refunded_cents INTEGER NOT NULL DEFAULT 0,
-        output_path TEXT,
-        output_name TEXT,
-        thumbnail_path TEXT,
-        thumbnail_name TEXT,
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL,
-        FOREIGN KEY (file_id) REFERENCES files(id) ON DELETE CASCADE
-      );
-      INSERT INTO jobs_new
-      SELECT id, owner, file_id, status, COALESCE(params,'{}'), COALESCE(progress,0),
-             COALESCE(log,''), COALESCE(charged_cents,0), COALESCE(refunded_cents,0),
-             output_path, output_name, thumbnail_path, thumbnail_name, created_at, updated_at
-      FROM jobs;
-      DROP TABLE jobs;
-      ALTER TABLE jobs_new RENAME TO jobs;
-      CREATE INDEX IF NOT EXISTS idx_jobs_updated_at ON jobs(updated_at);
-    `);
-    db.exec("PRAGMA foreign_keys=ON;");
-  }
-})();
-
-db.prepare(
-  `INSERT INTO accounts(owner,balance_cents,updated_at)
-   VALUES('admin',1000,datetime('now'))
-   ON CONFLICT(owner) DO NOTHING;`
-).run();
-db.prepare(
-  `INSERT INTO accounts(owner,balance_cents,updated_at)
-   VALUES('user',500,datetime('now'))
-   ON CONFLICT(owner) DO NOTHING;`
-).run();
-=======
 for (const d of [UP_DIR, OUT_DIR, THUMB_DIR]) fs.mkdirSync(d, { recursive: true });
->>>>>>> database
 
 // ----- app -----
 const app = express();
@@ -340,53 +214,27 @@ async function auth(req, res, next) {
     const payload = await idTokenVerifier.verify(m[1]);
     const rawName = payload["cognito:username"];
     const username = typeof rawName === "string" ? rawName.trim() : "";
-<<<<<<< HEAD
-    const isAdmin = (username.toLowerCase() === "admin");
-=======
->>>>>>> database
 
     req.user = {
-      sub: username || payload.sub || "",
+      sub: username,
       email: payload.email || null,
       jwt: m[1],
-<<<<<<< HEAD
-      admin: isAdmin,
-=======
       admin: isAdminByEnv(payload, username),  // ← 使用 env 白名单判断
->>>>>>> database
     };
-
-    return next();
+    next();
   } catch (e) {
     return res.status(401).json({ ok: false, error: "invalid token", detail: e.message });
   }
 }
 
 
-<<<<<<< HEAD
-
-// ======================================new Added section=====================================
-//  ===  Set up storage for files ===
-//  ===  S3 client ===
-=======
 // === S3 ===
->>>>>>> database
 const s3 = new S3Client({ region: process.env.AWS_REGION });
 const BUCKET = process.env.AWS_S3_BUCKET;
 
 // Multer 本地临时盘
 const tmpDir = path.join(process.cwd(), "uploads");
-<<<<<<< HEAD
-
-// 確保資料夾存在
-if (!fs.existsSync(tmpDir)) {
-  fs.mkdirSync(tmpDir, { recursive: true });
-}
-
-
-=======
 if (!fs.existsSync(tmpDir)) fs.mkdirSync(tmpDir, { recursive: true });
->>>>>>> database
 const storage = multer.diskStorage({
   destination: (_req, _file, cb) => cb(null, tmpDir),
   filename: (_req, file, cb) => cb(null, `${Date.now()}-${file.originalname}`),
@@ -411,16 +259,6 @@ app.get("/me", auth, async (req, res) => {
   ]);
   res.json({
     user: req.user.sub,
-<<<<<<< HEAD
-    admin: !!req.user.admin,   // ensure this is present
-    balance_cents: a?.balance_cents ?? 0,
-    updated_at: a?.updated_at ?? null,
-  });
-});
-
-
-app.post("/accounts/topup", auth, (req, res) => {
-=======
     admin: !!req.user.admin,
     balance_cents: row?.balance_cents ?? 0,
     updated_at: row?.updated_at ?? null,
@@ -428,7 +266,6 @@ app.post("/accounts/topup", auth, (req, res) => {
 });
 
 app.post("/accounts/topup", auth, async (req, res) => {
->>>>>>> database
   const amount = Number(req.body?.amount_cents ?? 0);
   if (!Number.isInteger(amount) || amount <= 0)
     return res.status(400).json({ ok: false, error: "invalid amount" });
@@ -579,17 +416,8 @@ app.delete("/files/:id", auth, async (req, res) => {
   res.json({ ok: true });
 });
 
-<<<<<<< HEAD
-
-
-
-
-// ----- admin: list all users' files -----
-app.get("/admin/files", auth, (req, res) => {
-=======
 // ----- admin: list all users' files -----
 app.get("/admin/files", auth, async (req, res) => {
->>>>>>> database
   if (!req.user?.admin) return res.status(403).json({ ok: false, error: "forbidden" });
 
   const { page, size, offset, q, sort, order } = listParams(req, {
@@ -600,41 +428,6 @@ app.get("/admin/files", auth, async (req, res) => {
   const where = [];
   const params = [];
   if (q) {
-<<<<<<< HEAD
-    // search in filename OR owner
-    where.push("(filename LIKE ? OR owner LIKE ?)");
-    params.push(`%${q}%`, `%${q}%`);
-  }
-  const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
-
-  const total = db.prepare(`SELECT COUNT(*) c FROM files ${whereSql}`).get(...params).c;
-  const rows = db.prepare(
-    `SELECT id, owner, filename, size_bytes, mime, uploaded_at
-     FROM files ${whereSql}
-     ORDER BY ${sort} ${order} LIMIT ? OFFSET ?`
-  ).all(...params, size, offset);
-
-  res.set("X-Total-Count", String(total));
-  res.set("X-Page", String(page));
-  res.set("X-Page-Size", String(size));
-  res.json({ items: rows, total, page, size, sort, order, q });
-});
-
-
-
-
-
-
-
-app.get("/download/original/:fileId", auth, (req, res) => {
-  const row = db
-    .prepare(`SELECT stored_path,filename FROM files WHERE id=? AND owner=?`)
-    .get(req.params.fileId, req.user.sub);
-  if (!row || !fs.existsSync(row.stored_path)) return res.sendStatus(404);
-  res.setHeader(
-    "Content-Disposition",
-    `attachment; filename="${path.basename(row.filename)}"`
-=======
     where.push(`(filename ILIKE $1 OR owner ILIKE $1)`);
     params.push(`%${q}%`);
   }
@@ -649,7 +442,6 @@ app.get("/download/original/:fileId", auth, (req, res) => {
       ORDER BY ${sort} ${order}
       LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
     [...params, size, offset]
->>>>>>> database
   );
 
   res.set("X-Total-Count", String(total));
@@ -1086,4 +878,5 @@ log("[COG] region=%s pool=%s clientId=%s hasSecret=%s secret=%s hash(admin)=%s",
 // ----- start -----
 app.listen(PORT, () => {
   log(`Server listening on http://localhost:${PORT}`);
+  log(`DATA_DIR: ${DATA_DIR}`);
 });
