@@ -176,9 +176,11 @@ app.post("/login", async (req, res) => {
     idToken = out?.AuthenticationResult?.IdToken;
     if (!idToken) return res.status(401).json({ ok: false, error: "no token" });
   } catch (e) {
+
     console.error("[/login] Cognito error:", e.name, e.message);
     return res.status(401).json({ ok: false, error: e.name || "AuthError", message: e.message || "Login failed" });
   }
+
 
   res.json({ ok: true, authToken: idToken });
 
@@ -201,6 +203,7 @@ app.get("/auth/whoami", auth, (req, res) => {
 });
 
 // auth middleware
+
 async function auth(req, res, next) {
   try {
     const m = (req.headers.authorization || "").match(/^Bearer (.+)$/i);
@@ -215,6 +218,7 @@ async function auth(req, res, next) {
       email: payload.email || null,
       jwt: m[1],
       admin: isAdminByEnv(payload, username),
+
     };
     next();
   } catch (e) {
@@ -222,11 +226,13 @@ async function auth(req, res, next) {
   }
 }
 
+
 // === S3 ===
 const s3 = new S3Client({ region: process.env.AWS_REGION });
 const BUCKET = process.env.AWS_S3_BUCKET;
 
 // Multer temp
+
 const tmpDir = path.join(process.cwd(), "uploads");
 if (!fs.existsSync(tmpDir)) fs.mkdirSync(tmpDir, { recursive: true });
 const storage = multer.diskStorage({
@@ -237,6 +243,7 @@ function nowTs(){return Date.now()}
 const upload = multer({ storage });
 
 // helpers
+
 function listParams(req, opt) {
   const page = Math.max(1, parseInt(req.query.page || "1", 10));
   const size = Math.min(100, Math.max(1, parseInt(req.query.size || "10", 10)));
@@ -247,7 +254,8 @@ function listParams(req, opt) {
   return { page, size, offset, q, sort, order };
 }
 
-// account
+
+// ----- account -----
 app.get("/me", auth, async (req, res) => {
   const row = await one("SELECT balance_cents, updated_at FROM accounts WHERE owner=$1", [
     req.user.sub,
@@ -281,6 +289,10 @@ app.post("/accounts/topup", auth, async (req, res) => {
 app.post("/upload", auth, upload.single("file"), async (req, res) => {
   if (!req.file) return res.status(400).json({ ok: false, error: "no file" });
 
+
+// ----- files -----
+app.post("/upload", auth, upload.single("file"), async (req, res) => {
+  if (!req.file) return res.status(400).json({ ok: false, error: "no file" });
   const id = uuidv4();
   const original = req.file.originalname || "upload.bin";
   const safeName = `${id}-${original.replace(/[^\w.\-]+/g, "_")}`;
@@ -293,6 +305,7 @@ app.post("/upload", auth, upload.single("file"), async (req, res) => {
 
   try {
     // 1) 上传到 S3（同步等待，失败则直接返回 500）
+
     await s3.send(
       new PutObjectCommand({
         Bucket: BUCKET,
@@ -350,7 +363,6 @@ app.get("/debug/db", async (_req, res) => {
     res.status(500).json({ ok: false, error: e.message });
   }
 });
-
 
 app.get("/files", auth, async (req, res) => {
   const { page, size, offset, q, sort, order } = listParams(req, {
@@ -452,6 +464,7 @@ app.delete("/files/:id", auth, async (req, res) => {
 app.get("/admin/files", auth, async (req, res) => {
   if (!req.user?.admin) return res.status(403).json({ ok: false, error: "forbidden" });
 
+
   const { page, size, offset, q, sort, order } = listParams(req, {
     sortWhitelist: ["uploaded_at", "size_bytes", "filename", "owner"],
     defaultSort: "uploaded_at",
@@ -483,6 +496,7 @@ app.get("/admin/files", auth, async (req, res) => {
 });
 
 // download (self-only)
+
 app.get("/download/original/:fileId", auth, async (req, res) => {
   const row = await one(`SELECT stored_path, filename FROM files WHERE id=$1 AND owner=$2`, [
     req.params.fileId,
@@ -692,6 +706,7 @@ app.post("/transcode/:fileId", auth, async (req, res) => {
         await flushLog();
       }, 800);
     }
+
   };
   let lastProgAt = 0;
   const tickProgress = async () => {
@@ -713,6 +728,7 @@ app.post("/transcode/:fileId", auth, async (req, res) => {
     await new Promise(async (resolve, reject) => {
       const s3Object = await s3.send(new GetObjectCommand({ Bucket: BUCKET, Key: f.stored_path }));
       const s3Stream = s3Object.Body;
+
 
       ffmpeg(s3Stream)
         .addOptions([
@@ -845,7 +861,7 @@ app.get("/outputs", auth, (_req, res) => {
   res.json({ items });
 });
 
-// —— 启动时自动建表 —— //
+
 async function ensureTables() {
   await run(`
     CREATE TABLE IF NOT EXISTS accounts (
@@ -884,6 +900,9 @@ async function ensureTables() {
   `);
 }
 await ensureTables();
+
+
+// ----- start -----
 
 app.listen(PORT, () => {
   log(`Server listening on http://localhost:${PORT}`);

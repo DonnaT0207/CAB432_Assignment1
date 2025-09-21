@@ -171,6 +171,38 @@
       </div>
     </section>
 
+    <!-- 3A) All users' files (admin only) -->
+<section class="card" id="adminSection" style="display:none;">
+  <div class="section-head">
+    <h2>3A) All users' files (admin)</h2>
+    <div class="actions">
+      <input id="adminFilesQ" type="text" placeholder="Search filename or owner..." style="min-width:200px">
+      <select id="adminFilesSort">
+        <option value="uploaded_at">Uploaded time</option>
+        <option value="size_bytes">Size</option>
+        <option value="filename">Filename</option>
+        <option value="owner">Owner</option>
+      </select>
+      <select id="adminFilesOrder">
+        <option value="desc">Desc</option>
+        <option value="asc">Asc</option>
+      </select>
+      <select id="adminFilesSize">
+        <option value="5">5</option><option value="10" selected>10</option><option value="20">20</option>
+      </select>
+      <button id="btnAdminList" class="btn secondary" disabled>Refresh</button>
+    </div>
+  </div>
+  <div id="adminFiles" class="list"></div>
+  <div class="pager">
+    <button id="adminFilesPrev" class="btn secondary" disabled>Prev</button>
+    <span class="small">Page <b id="adminFilesPage">1</b></span>
+    <button id="adminFilesNext" class="btn secondary" disabled>Next</button>
+    <span class="small" id="adminFilesTotal" style="opacity:.7"></span>
+  </div>
+</section>
+
+
     <!-- 4) Jobs -->
     <section class="card">
       <div class="section-head">
@@ -221,11 +253,13 @@ let token = null, jobsInterval = null;
 let filesPage=1, jobsPage=1, adminFilesPage=1;
 let isAdmin = false;
 
+
 const $ = (q)=>document.querySelector(q);
 function toast(msg,type="success",t=2500){const w=$("#toasts");const d=document.createElement("div");
 d.className=`toast ${type}`;d.textContent=msg;w.appendChild(d);setTimeout(()=>d.remove(),t)}
 function setAuthPill(text,kind){const p=$("#authState");p.className=`pill ${kind}`;
 p.innerHTML=`${kind==='warn'?'<span class="spinner"></span> ':''}${text}`}
+
 function escapeHtml(s){return (s==null)?'':String(s).replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;').replaceAll("'",'&#39;')}
 function setBalance(cents){ $("#bal").textContent=(Number(cents||0)/100).toFixed(2); }
 function debounce(fn, delay=300){ let t; return (...args)=>{ clearTimeout(t); t=setTimeout(()=>fn(...args), delay); }; }
@@ -321,8 +355,10 @@ function toggleUI(on){
 }
 
 // --- 余额/身份信息（不会再调用 toggleUI，避免循环）---
+
 async function refreshMe(){
-  const r=await guardFetch(BASE+'/me'); const j=await r.json().catch(()=>null);
+  const r = await guardFetch(BASE+'/me');
+  const j = await r.json().catch(()=>null);
   setBalance(j?.balance_cents||0);
 
   // 以 /me 返回为准更新 isAdmin 并更新 3A 区显示
@@ -342,6 +378,7 @@ async function refreshMe(){
 }
 
 // --- Upload ---
+
 $("#btnUpload").onclick = async ()=>{
   const f=$("#file").files[0]; if(!f) return toast('Choose a video file first','error');
   const fd=new FormData(); fd.append('file',f);
@@ -358,6 +395,61 @@ $("#filesQ").oninput = debounce(()=>{ filesPage=1; listFiles(); }, 300);
 $("#filesSort").onchange = ()=>{ filesPage=1; listFiles(); };
 $("#filesOrder").onchange = ()=>{ filesPage=1; listFiles(); };
 $("#filesSize").onchange = ()=>{ filesPage=1; listFiles(); };
+
+// --- Admin: list all users' files ---
+$("#btnAdminList")?.addEventListener("click", ()=>{ adminFilesPage=1; listAdminFiles(); });
+$("#adminFilesPrev")?.addEventListener("click", ()=>{ if(adminFilesPage>1){ adminFilesPage--; listAdminFiles(); }});
+$("#adminFilesNext")?.addEventListener("click", ()=>{ adminFilesPage++; listAdminFiles(); });
+
+const adminDebouncedSearch = debounce(()=>{ adminFilesPage=1; listAdminFiles(); }, 300);
+$("#adminFilesQ")?.addEventListener("input", adminDebouncedSearch);
+$("#adminFilesSort")?.addEventListener("change", ()=>{ adminFilesPage=1; listAdminFiles(); });
+$("#adminFilesOrder")?.addEventListener("change", ()=>{ adminFilesPage=1; listAdminFiles(); });
+$("#adminFilesSize")?.addEventListener("change", ()=>{ adminFilesPage=1; listAdminFiles(); });
+
+async function listAdminFiles(){
+  if(!isAdmin) return; // safety
+
+  const q = encodeURIComponent($("#adminFilesQ")?.value || "");
+  const sort = $("#adminFilesSort")?.value || "uploaded_at";
+  const order = $("#adminFilesOrder")?.value || "desc";
+  const size = parseInt($("#adminFilesSize")?.value,10) || 10;
+
+  const r = await guardFetch(`${BASE}/admin/files?page=${adminFilesPage}&size=${size}&q=${q}&sort=${sort}&order=${order}`);
+  const j = await r.json().catch(()=>null);
+
+  const total = j?.total || 0;
+  const box = $("#adminFiles");
+  if (!box) return;
+  box.innerHTML = "";
+  const items = j?.items || [];
+  if (!items.length) { box.innerHTML = '<div class="empty">No files found.</div>'; return; }
+
+  items.forEach(it=>{
+    const el = document.createElement('div'); el.className='item';
+    el.innerHTML=`
+      <div class="item-head">
+        <div class="item-title">${escapeHtml(it.filename)}</div>
+        <div class="actions">
+          <!-- read-only admin view for now -->
+          <span class="pill">${Number(it.size_bytes||0)} bytes</span>
+        </div>
+      </div>
+      <div class="small muted">
+        id: <code>${escapeHtml(it.id)}</code>
+        <span class="sep">•</span> owner: <b>${escapeHtml(it.owner)}</b>
+        <span class="sep">•</span> uploaded: ${escapeHtml(it.uploaded_at||'-')}
+      </div>`;
+    box.appendChild(el);
+  });
+
+  $("#adminFilesPage").textContent = String(j?.page || adminFilesPage);
+  $("#adminFilesTotal").textContent = `Total: ${total}`;
+  const maxPage = Math.max(1, Math.ceil(total / size));
+  $("#adminFilesPrev").disabled = (adminFilesPage<=1);
+  $("#adminFilesNext").disabled = (adminFilesPage>=maxPage);
+}
+
 
 async function listFiles(){
   const q = encodeURIComponent($("#filesQ").value||"");
@@ -440,6 +532,7 @@ $("#btnTopup").onclick = async ()=>{
     toast(`Top up failed: ${j?.error||j?.message||r.status}`,'error');
   }
 };
+
 
 // --- Subs / Meta ---
 async function subsFetch(e){
@@ -530,6 +623,7 @@ async function listJobs(){
   box.querySelectorAll('.btnDownTc').forEach(b=>b.onclick=downloadOutput);
   box.querySelectorAll('.btnLogs').forEach(b=>b.onclick=showLogs);
   box.querySelectorAll('.btnThumb').forEach(b=>b.onclick=showThumb);
+
   $("#jobsPage").textContent=String(j?.page||jobsPage);
   $("#jobsTotal").textContent=`Total: ${total}`;
   const maxPage = Math.max(1, Math.ceil(total / size));
@@ -552,6 +646,7 @@ async function downloadOutput(e){
   const r=await guardFetch(BASE+'/download/transcoded/'+encodeURIComponent(jobId));
   if(r.status===409){ toast('Output not ready yet','error'); return; }
   if(!r.ok){ toast('Download failed','error'); return; }
+
   const data = await r.json();
   const url = data.downloadUrl;
   const a = document.createElement('a'); a.href = url; a.download = '';
@@ -610,6 +705,7 @@ async function listAdminFiles() {
   if (saved) {
     token = saved;
     await checkAdminStatus();
+
     toggleUI(true);
   } else {
     toggleUI(false);
