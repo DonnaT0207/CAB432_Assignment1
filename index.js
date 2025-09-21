@@ -64,7 +64,6 @@ const COG_CLIENT_SECRET= process.env.COGNITO_CLIENT_SECRET || "";
 const cogClient = new CognitoIdentityProviderClient({ region: COG_REGION });
 const hasSecret = typeof COG_CLIENT_SECRET === "string" && COG_CLIENT_SECRET.length > 0;
 
-
 function makeSecretHash(username) {
   if (!hasSecret) return null;
   const hmac = crypto.createHmac("sha256", COG_CLIENT_SECRET);
@@ -124,7 +123,7 @@ app.post("/auth/signup", async (req, res) => {
   }
 });
 
-// ---- admin allowlist from env (可选，用你原来的 env 白名单) ----
+// ---- admin allowlist from env ----
 const ADM_USERNAMES = (process.env.ADMIN_USERNAMES || "")
   .split(",").map(s => s.trim().toLowerCase()).filter(Boolean);
 const ADM_EMAILS = (process.env.ADMIN_EMAILS || "")
@@ -134,13 +133,11 @@ const ADM_GROUPS = (process.env.ADMIN_GROUPS || "")
 
 function isAdminByEnv(payload, username) {
   const u = (username || "").toLowerCase();
-  const email = (payload?.email || "").toLowerCase();
-  const groups = Array.isArray(payload?.["cognito:groups"]) ? payload["cognito:groups"] : [];
-  if (ADM_USERNAMES.includes(u)) return true;
-  if (email && ADM_EMAILS.includes(email)) return true;
-  if (groups.some(g => ADM_GROUPS.includes(g))) return true;
-  return false;
+  return ((process.env.ADMIN_USERNAMES || "")
+    .split(",").map(s => s.trim().toLowerCase()).filter(Boolean))
+    .includes(u);
 }
+
 
 app.post("/auth/confirm", async (req, res) => {
   const { username, code } = req.body || {};
@@ -179,12 +176,10 @@ app.post("/login", async (req, res) => {
     idToken = out?.AuthenticationResult?.IdToken;
     if (!idToken) return res.status(401).json({ ok: false, error: "no token" });
   } catch (e) {
-    // 这里不做任何硬编码用户名；把 Cognito 的真实错误原样返回，方便你前端提示
     console.error("[/login] Cognito error:", e.name, e.message);
     return res.status(401).json({ ok: false, error: e.name || "AuthError", message: e.message || "Login failed" });
   }
 
-  // 登录成功 -> 立即把 token 返回前端，保证 UX；后面 DB 异步确保账户行（失败只记日志）
   res.json({ ok: true, authToken: idToken });
 
   try {
@@ -199,13 +194,13 @@ app.post("/login", async (req, res) => {
   } 
 });
 
-
 // whoami
 app.get("/auth/whoami", auth, (req, res) => {
   res.json({ ok: true, user: req.user });
+  
 });
 
-// auth (Cognito ID token）
+// auth middleware
 async function auth(req, res, next) {
   try {
     const m = (req.headers.authorization || "").match(/^Bearer (.+)$/i);
@@ -219,7 +214,7 @@ async function auth(req, res, next) {
       sub: username,
       email: payload.email || null,
       jwt: m[1],
-      admin: isAdminByEnv(payload, username),  // ← 使用 env 白名单判断
+      admin: isAdminByEnv(payload, username),
     };
     next();
   } catch (e) {
@@ -227,21 +222,21 @@ async function auth(req, res, next) {
   }
 }
 
-
 // === S3 ===
 const s3 = new S3Client({ region: process.env.AWS_REGION });
 const BUCKET = process.env.AWS_S3_BUCKET;
 
-// Multer 本地临时盘
+// Multer temp
 const tmpDir = path.join(process.cwd(), "uploads");
 if (!fs.existsSync(tmpDir)) fs.mkdirSync(tmpDir, { recursive: true });
 const storage = multer.diskStorage({
   destination: (_req, _file, cb) => cb(null, tmpDir),
-  filename: (_req, file, cb) => cb(null, `${Date.now()}-${file.originalname}`),
+  filename: (_req, file, cb) => cb(null, `${nowTs()}-${file.originalname}`),
 });
+function nowTs(){return Date.now()}
 const upload = multer({ storage });
 
-// ----- helpers -----
+// helpers
 function listParams(req, opt) {
   const page = Math.max(1, parseInt(req.query.page || "1", 10));
   const size = Math.min(100, Math.max(1, parseInt(req.query.size || "10", 10)));
@@ -252,7 +247,7 @@ function listParams(req, opt) {
   return { page, size, offset, q, sort, order };
 }
 
-// ----- account -----
+// account
 app.get("/me", auth, async (req, res) => {
   const row = await one("SELECT balance_cents, updated_at FROM accounts WHERE owner=$1", [
     req.user.sub,
@@ -281,19 +276,23 @@ app.post("/accounts/topup", auth, async (req, res) => {
   res.json({ ok: true, added: amount });
 });
 
-// ----- files -----
+// files (self)
+// files (self)
 app.post("/upload", auth, upload.single("file"), async (req, res) => {
   if (!req.file) return res.status(400).json({ ok: false, error: "no file" });
+
   const id = uuidv4();
   const original = req.file.originalname || "upload.bin";
   const safeName = `${id}-${original.replace(/[^\w.\-]+/g, "_")}`;
-
   const username = req.user.sub;
   const s3Key = `${username}/uploaded/${safeName}`;
-  const fileStream = fs.createReadStream(req.file.path);
-  log("Temp file path:", req.file.path);
+  const filePath = req.file.path;
+  const fileStream = fs.createReadStream(filePath);
+
+  log("[upload] start. user=%s file=%s bytes=%s", username, original, req.file.size);
 
   try {
+    // 1) 上传到 S3（同步等待，失败则直接返回 500）
     await s3.send(
       new PutObjectCommand({
         Bucket: BUCKET,
@@ -302,21 +301,56 @@ app.post("/upload", auth, upload.single("file"), async (req, res) => {
         ContentType: req.file.mimetype,
       })
     );
-    try {
-      fs.unlinkSync(req.file.path);
-    } catch {}
-
-    await run(
-      `INSERT INTO files (id,owner,filename,stored_path,size_bytes,mime,uploaded_at)
-       VALUES ($1,$2,$3,$4,$5,$6,now())`,
-      [id, username, original, s3Key, req.file.size, req.file.mimetype || null]
-    );
-    res.json({ ok: true, fileId: id, filename: original, s3Key });
+    log("[upload] S3 put OK -> %s", s3Key);
   } catch (e) {
-    console.error("Upload failed:", e);
-    res.status(500).json({ ok: false, error: "upload failed: " + e.message });
+    console.error("[upload] S3 put failed:", e);
+    try { fs.unlinkSync(filePath); } catch {}
+    return res.status(500).json({ ok: false, error: "s3_put_failed", message: e.message });
+  } finally {
+    // 无论 S3 成功或失败，都可以删掉本地临时文件（S3 成功时尤其需要）
+    try { fs.unlinkSync(filePath); } catch {}
+  }
+
+  // 2) 先把成功消息返给前端，避免因 DB 问题卡住页面
+  res.json({ ok: true, fileId: id, filename: original, s3Key });
+
+  // 3) 后台尝试写 DB，并且加一个 8 秒超时保护，避免长时间占用连接
+  const dbInsert = run(
+    `INSERT INTO files (id,owner,filename,stored_path,size_bytes,mime,uploaded_at)
+     VALUES ($1,$2,$3,$4,$5,$6,now())`,
+    [id, username, original, s3Key, req.file.size, req.file.mimetype || null]
+  );
+
+  const timeout = new Promise((_, reject) => {
+    const t = setTimeout(() => {
+      clearTimeout(t);
+      reject(new Error("DB_TIMEOUT"));
+    }, 8000);
+  });
+
+  try {
+    await Promise.race([dbInsert, timeout]);
+    log("[upload] DB insert OK. id=%s owner=%s", id, username);
+  } catch (e) {
+    if (e.message === "DB_TIMEOUT") {
+      console.error("[upload] DB insert timeout. id=%s owner=%s", id, username);
+    } else {
+      console.error("[upload] DB insert failed:", e);
+    }
+    // 不中断：已经返回给客户端成功，DB 可由你后面排查修复
   }
 });
+
+
+app.get("/debug/db", async (_req, res) => {
+  try {
+    const r = await one("SELECT 1 AS ok");
+    res.json({ ok: true, db: r?.ok === 1 });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
 
 app.get("/files", auth, async (req, res) => {
   const { page, size, offset, q, sort, order } = listParams(req, {
@@ -411,8 +445,6 @@ app.delete("/files/:id", auth, async (req, res) => {
   ]);
   if (r.rowCount !== 1) return res.status(500).json({ ok: false, error: "delete failed" });
 
-  // 可选：同时删 S3 对象
-  // await s3.send(new DeleteObjectCommand({ Bucket: BUCKET, Key: row.stored_path }));
   res.json({ ok: true });
 });
 
@@ -450,6 +482,7 @@ app.get("/admin/files", auth, async (req, res) => {
   res.json({ items: rows, total, page, size, sort, order, q });
 });
 
+// download (self-only)
 app.get("/download/original/:fileId", auth, async (req, res) => {
   const row = await one(`SELECT stored_path, filename FROM files WHERE id=$1 AND owner=$2`, [
     req.params.fileId,
@@ -812,7 +845,7 @@ app.get("/outputs", auth, (_req, res) => {
   res.json({ items });
 });
 
-// —— 启动时自动建表（可留可删，不影响既有表） —— //
+// —— 启动时自动建表 —— //
 async function ensureTables() {
   await run(`
     CREATE TABLE IF NOT EXISTS accounts (
@@ -852,30 +885,6 @@ async function ensureTables() {
 }
 await ensureTables();
 
-// ===== DIAG (临时排查用，用完可删) =====
-function mask(s) {
-  if (!s) return null;
-  return s.slice(0,4) + '...' + s.slice(-4);
-}
-app.get("/__diag", (_req, res) => {
-  res.json({
-    region: COG_REGION,
-    userPool: COG_USER_POOL_ID,
-    clientId: COG_CLIENT_ID,
-    hasSecret: !!COG_CLIENT_SECRET,
-    clientSecretMasked: mask(COG_CLIENT_SECRET),
-    secretHash_admin_prefix: makeSecretHash("admin")?.slice(0,8) || null
-  });
-});
-
-// 启动时也打一下（方便看控制台）
-log("[COG] region=%s pool=%s clientId=%s hasSecret=%s secret=%s hash(admin)=%s",
-  COG_REGION, COG_USER_POOL_ID, COG_CLIENT_ID, !!COG_CLIENT_SECRET,
-  mask(COG_CLIENT_SECRET),
-  makeSecretHash("admin")?.slice(0,8) || null
-);
-
-// ----- start -----
 app.listen(PORT, () => {
   log(`Server listening on http://localhost:${PORT}`);
   log(`DATA_DIR: ${DATA_DIR}`);
