@@ -12,6 +12,7 @@ import {
   S3Client,
   PutObjectCommand,
   GetObjectCommand,
+  HeadObjectCommand, 
 } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import fetch from "node-fetch";
@@ -203,28 +204,38 @@ app.get("/auth/whoami", auth, (req, res) => {
 });
 
 // auth middleware
-
 async function auth(req, res, next) {
   try {
     const m = (req.headers.authorization || "").match(/^Bearer (.+)$/i);
     if (!m) return res.status(401).json({ ok: false, error: "missing token" });
 
-    const payload = await idTokenVerifier.verify(m[1]);
+    const token = m[1];
+    const payload = await idTokenVerifier.verify(token);
     const rawName = payload["cognito:username"];
     const username = typeof rawName === "string" ? rawName.trim() : "";
+
+    // 从 token 中提取 groups
+    const groups = Array.isArray(payload["cognito:groups"])
+      ? payload["cognito:groups"]
+      : [];
+
+    // 判断是否 admin
+    const isAdmin = groups.includes("Admin") || isAdminByEnv(payload, username);
 
     req.user = {
       sub: username,
       email: payload.email || null,
-      jwt: m[1],
-      admin: isAdminByEnv(payload, username),
-
+      groups,
+      jwt: token,
+      admin: isAdmin,
     };
+
     next();
   } catch (e) {
     return res.status(401).json({ ok: false, error: "invalid token", detail: e.message });
   }
 }
+
 
 
 // === S3 ===
@@ -286,68 +297,105 @@ app.post("/accounts/topup", auth, async (req, res) => {
 
 
 // ----- files -----
+// 强化版上传：一定写入 S3，写完立即校验并返回一个预签名下载 URL
 app.post("/upload", auth, upload.single("file"), async (req, res) => {
   if (!req.file) return res.status(400).json({ ok: false, error: "no file" });
+
   const id = uuidv4();
   const original = req.file.originalname || "upload.bin";
   const safeName = `${id}-${original.replace(/[^\w.\-]+/g, "_")}`;
   const username = req.user.sub;
   const s3Key = `${username}/uploaded/${safeName}`;
   const filePath = req.file.path;
-  const fileStream = fs.createReadStream(filePath);
 
-  log("[upload] start. user=%s file=%s bytes=%s", username, original, req.file.size);
+  log("[upload] start user=%s size=%d name=%s", username, req.file.size, original);
 
+  // 1) PutObject 到 S3，带超时
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), 45_000); // 45s 超时
   try {
-    // 1) 上传到 S3（同步等待，失败则直接返回 500）
-
     await s3.send(
       new PutObjectCommand({
         Bucket: BUCKET,
         Key: s3Key,
-        Body: fileStream,
-        ContentType: req.file.mimetype,
-      })
+        Body: fs.createReadStream(filePath),
+        ContentType: req.file.mimetype || "application/octet-stream",
+      }),
+      { abortSignal: ac.signal }
     );
-    log("[upload] S3 put OK -> %s", s3Key);
   } catch (e) {
-    console.error("[upload] S3 put failed:", e);
+    clearTimeout(timer);
     try { fs.unlinkSync(filePath); } catch {}
-    return res.status(500).json({ ok: false, error: "s3_put_failed", message: e.message });
+    const code = e?.name === "AbortError" ? "s3_timeout" : "s3_put_failed";
+    console.error("[upload] S3 put failed:", e?.name || e, e?.message || "");
+    return res.status(504).json({ ok: false, error: code, message: e?.message || String(e) });
   } finally {
-    // 无论 S3 成功或失败，都可以删掉本地临时文件（S3 成功时尤其需要）
+    clearTimeout(timer);
     try { fs.unlinkSync(filePath); } catch {}
   }
 
-  // 2) 先把成功消息返给前端，避免因 DB 问题卡住页面
-  res.json({ ok: true, fileId: id, filename: original, s3Key });
-
-  // 3) 后台尝试写 DB，并且加一个 8 秒超时保护，避免长时间占用连接
-  const dbInsert = run(
-    `INSERT INTO files (id,owner,filename,stored_path,size_bytes,mime,uploaded_at)
-     VALUES ($1,$2,$3,$4,$5,$6,now())`,
-    [id, username, original, s3Key, req.file.size, req.file.mimetype || null]
-  );
-
-  const timeout = new Promise((_, reject) => {
-    const t = setTimeout(() => {
-      clearTimeout(t);
-      reject(new Error("DB_TIMEOUT"));
-    }, 8000);
-  });
-
+  // 2) 立即 HEAD 校验对象是否存在（确保真的进了 S3）
   try {
-    await Promise.race([dbInsert, timeout]);
-    log("[upload] DB insert OK. id=%s owner=%s", id, username);
+    await s3.send(new HeadObjectCommand({ Bucket: BUCKET, Key: s3Key }));
   } catch (e) {
-    if (e.message === "DB_TIMEOUT") {
-      console.error("[upload] DB insert timeout. id=%s owner=%s", id, username);
-    } else {
-      console.error("[upload] DB insert failed:", e);
-    }
-    // 不中断：已经返回给客户端成功，DB 可由你后面排查修复
+    console.error("[upload] S3 head failed (object not found right after put):", e?.message || e);
+    return res.status(502).json({ ok: false, error: "s3_head_failed" });
+  }
+
+  // 3) 生成一个 60s 的下载链接，作为“确实在 S3”的证据返回前端
+  let signedUrl = null;
+  try {
+    const cmd = new GetObjectCommand({
+      Bucket: BUCKET,
+      Key: s3Key,
+      ResponseContentDisposition: `attachment; filename="${original}"`,
+    });
+    signedUrl = await getSignedUrl(s3, cmd, { expiresIn: 60 });
+  } catch (e) {
+    console.warn("[upload] signed url failed:", e?.message || e);
+  }
+
+  // 4) 先响应给前端（成功！）—— 用户立刻看到 “ok:true” 和 signedUrl
+  res.json({ ok: true, fileId: id, filename: original, s3Key, downloadUrl: signedUrl || null });
+
+  // 5) 再异步写数据库（就算 DB 临时慢，也不影响用户体验）
+  try {
+    const insert = run(
+      `INSERT INTO files (id,owner,filename,stored_path,size_bytes,mime,uploaded_at,owner_groups)
+      VALUES ($1,$2,$3,$4,$5,$6,now(),$7)`,
+      [id, username, original, s3Key, req.file.size, req.file.mimetype || null, JSON.stringify(req.user.groups || [])]
+    );
+
+
+    // 给 DB 写一个软超时（8s）
+    await Promise.race([
+      insert,
+      new Promise((_, rej) => setTimeout(() => rej(new Error("DB_TIMEOUT")), 8000)),
+    ]);
+    log("[upload] DB insert OK id=%s owner=%s", id, username);
+  } catch (e) {
+    console.error("[upload] DB insert failed id=%s owner=%s err=%s", id, username, e.message || e);
   }
 });
+
+
+
+
+import { STSClient, GetCallerIdentityCommand } from "@aws-sdk/client-sts";
+
+app.get("/debug/aws", async (_req, res) => {
+  try {
+    const sts = new STSClient({ region: process.env.AWS_REGION });
+    const out = await sts.send(new GetCallerIdentityCommand({}));
+    res.json({ ok: true, account: out.Account, arn: out.Arn, userId: out.UserId });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.name, message: e.message });
+  }
+});
+
+
+
+
 
 
 app.get("/debug/db", async (_req, res) => {
@@ -477,10 +525,10 @@ app.get("/admin/files", auth, async (req, res) => {
   const total = totalRow?.c ?? 0;
 
   const rows = await all(
-    `SELECT id, owner, filename, size_bytes, mime, uploaded_at
-       FROM files ${whereSql}
-      ORDER BY ${sort} ${order}
-      LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+    `SELECT id, owner, filename, size_bytes, mime, uploaded_at, owner_groups
+    FROM files ${whereSql}
+    ORDER BY ${sort} ${order}
+    LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
     [...params, size, offset]
   );
 
@@ -892,6 +940,7 @@ async function ensureTables() {
       updated_at TIMESTAMPTZ NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_jobs_updated_at ON jobs(updated_at);
+    ALTER TABLE files ADD COLUMN IF NOT EXISTS owner_groups JSONB;
   `);
 }
 await ensureTables();
