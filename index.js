@@ -284,11 +284,6 @@ app.post("/accounts/topup", auth, async (req, res) => {
   res.json({ ok: true, added: amount });
 });
 
-// files (self)
-// files (self)
-app.post("/upload", auth, upload.single("file"), async (req, res) => {
-  if (!req.file) return res.status(400).json({ ok: false, error: "no file" });
-
 
 // ----- files -----
 app.post("/upload", auth, upload.single("file"), async (req, res) => {
