@@ -106,7 +106,6 @@
           <input id="file" type="file" accept="video/*" disabled />
           <button id="btnUpload" class="btn primary" disabled>Upload</button>
         </div>
-        <pre id="upRes" class="subtle" style="white-space:pre-wrap;"></pre>
       </section>
     </div>
 
@@ -170,38 +169,6 @@
         <span class="small" id="filesTotal" style="opacity:.7"></span>
       </div>
     </section>
-
-    <!-- 3A) All users' files (admin only) -->
-<section class="card" id="adminSection" style="display:none;">
-  <div class="section-head">
-    <h2>3A) All users' files (admin)</h2>
-    <div class="actions">
-      <input id="adminFilesQ" type="text" placeholder="Search filename or owner..." style="min-width:200px">
-      <select id="adminFilesSort">
-        <option value="uploaded_at">Uploaded time</option>
-        <option value="size_bytes">Size</option>
-        <option value="filename">Filename</option>
-        <option value="owner">Owner</option>
-      </select>
-      <select id="adminFilesOrder">
-        <option value="desc">Desc</option>
-        <option value="asc">Asc</option>
-      </select>
-      <select id="adminFilesSize">
-        <option value="5">5</option><option value="10" selected>10</option><option value="20">20</option>
-      </select>
-      <button id="btnAdminList" class="btn secondary" disabled>Refresh</button>
-    </div>
-  </div>
-  <div id="adminFiles" class="list"></div>
-  <div class="pager">
-    <button id="adminFilesPrev" class="btn secondary" disabled>Prev</button>
-    <span class="small">Page <b id="adminFilesPage">1</b></span>
-    <button id="adminFilesNext" class="btn secondary" disabled>Next</button>
-    <span class="small" id="adminFilesTotal" style="opacity:.7"></span>
-  </div>
-</section>
-
 
     <!-- 4) Jobs -->
     <section class="card">
@@ -380,12 +347,46 @@ async function refreshMe(){
 // --- Upload ---
 
 $("#btnUpload").onclick = async ()=>{
-  const f=$("#file").files[0]; if(!f) return toast('Choose a video file first','error');
-  const fd=new FormData(); fd.append('file',f);
-  const r=await guardFetch(BASE+'/upload',{method:'POST',body:fd}); const j=await r.json().catch(()=>null);
-  $("#upRes").textContent=JSON.stringify(j,null,2);
-  if(j&&j.ok){toast('Upload successful'); filesPage=1; listFiles();} else toast('Upload failed','error');
+  const f=$("#file").files[0]; 
+  if(!f){ toast('Choose a video file first','error'); return; }
+
+  const btn = $("#btnUpload");
+  const oldText = btn.textContent;
+  btn.disabled = true; btn.textContent = "Uploading…";
+
+  const fd = new FormData(); fd.append('file', f);
+
+  const ac = new AbortController();
+  const timer = setTimeout(()=>ac.abort(), 45_000);
+
+  let j=null, ok=false, msg='';
+  try{
+    const r = await guardFetch(BASE+'/upload',{ method:'POST', body:fd, signal: ac.signal });
+    j = await r.json().catch(()=>null);
+    ok = r.ok && j && j.ok !== false;
+    msg = ok ? 'Upload successful' : ('Upload failed: '+(j?.error||r.status));
+  }catch(e){
+    msg = (e.name === 'AbortError') ? 'Upload timeout' : ('Upload error: '+(e.message||e));
+  }finally{
+    clearTimeout(timer);
+    btn.disabled = false; btn.textContent = oldText;
+  }
+
+  // 展示返回体 + 如有预签名链接，放一个可点的 <a>
+  if (j && j.downloadUrl){
+    $("#upRes").textContent = JSON.stringify(j,null,2);
+    const a = document.createElement('a');
+    a.href = j.downloadUrl; a.target = '_blank'; a.textContent = 'Open S3 object (1 min)';
+    const box = document.createElement('div'); box.style.marginTop='6px'; box.appendChild(a);
+    $("#upRes").appendChild(box);
+  } else {
+    $("#upRes").textContent = j ? JSON.stringify(j,null,2) : msg;
+  }
+
+  toast(msg, ok ? 'success' : 'error');
+  if(ok){ filesPage=1; listFiles(); }
 };
+
 
 // --- Files (self) ---
 $("#btnList").onclick=()=>{ filesPage=1; listFiles(); };
@@ -427,19 +428,24 @@ async function listAdminFiles(){
 
   items.forEach(it=>{
     const el = document.createElement('div'); el.className='item';
+    const groups = Array.isArray(it.owner_groups)
+      ? it.owner_groups.join(', ')
+      : (it.owner_groups ? String(it.owner_groups) : '(no group)');
+
     el.innerHTML=`
       <div class="item-head">
         <div class="item-title">${escapeHtml(it.filename)}</div>
         <div class="actions">
-          <!-- read-only admin view for now -->
-          <span class="pill">${Number(it.size_bytes||0)} bytes</span>
+          <span class="pill">Owner: ${escapeHtml(it.owner)}</span>
+          <span class="pill">Groups: ${escapeHtml(groups)}</span>
         </div>
       </div>
       <div class="small muted">
         id: <code>${escapeHtml(it.id)}</code>
-        <span class="sep">•</span> owner: <b>${escapeHtml(it.owner)}</b>
+        <span class="sep">•</span> ${Number(it.size_bytes||0)} bytes
         <span class="sep">•</span> uploaded: ${escapeHtml(it.uploaded_at||'-')}
       </div>`;
+
     box.appendChild(el);
   });
 
@@ -661,43 +667,6 @@ $("#adminFilesQ").oninput = debounce(()=>{ adminFilesPage=1; listAdminFiles(); }
 $("#adminFilesSort").onchange = ()=>{ adminFilesPage=1; listAdminFiles(); };
 $("#adminFilesOrder").onchange = ()=>{ adminFilesPage=1; listAdminFiles(); };
 $("#adminFilesSize").onchange = ()=>{ adminFilesPage=1; listAdminFiles(); };
-
-async function listAdminFiles() {
-  if (!isAdmin) return;
-  const q = encodeURIComponent($("#adminFilesQ").value||"");
-  const sort = $("#adminFilesSort").value;
-  const order = $("#adminFilesOrder").value;
-  const size = parseInt($("#adminFilesSize").value,10)||10;
-
-  const r=await guardFetch(`${BASE}/admin/files?page=${adminFilesPage}&size=${size}&q=${q}&sort=${sort}&order=${order}`);
-  if (r.status===403){ $("#adminSection").style.display='none'; return; }
-  const j=await r.json().catch(()=>null);
-
-  const total=j?.total||0;
-  const box=$("#adminFiles"); box.innerHTML=''; const items=j&&j.items?j.items:[];
-  if(!items.length){box.innerHTML='<div class="empty">No files found.</div>';return;}
-  items.forEach(it=>{
-    const el=document.createElement('div'); el.className='item';
-    el.innerHTML=`
-      <div class="item-head">
-        <div class="item-title">${escapeHtml(it.filename)}</div>
-        <div class="actions">
-          <span class="pill">Owner: ${escapeHtml(it.owner)}</span>
-        </div>
-      </div>
-      <div class="small muted">
-        id: <code>${escapeHtml(it.id)}</code>
-        <span class="sep">•</span> ${Number(it.size_bytes||0)} bytes
-        <span class="sep">•</span> uploaded: ${escapeHtml(it.uploaded_at||'-')}
-      </div>`;
-    box.appendChild(el);
-  });
-  $("#adminFilesPage").textContent=String(j?.page||adminFilesPage);
-  $("#adminFilesTotal").textContent=`Total: ${total}`;
-  const maxPage = Math.max(1, Math.ceil(total / size));
-  $("#adminFilesPrev").disabled = (adminFilesPage<=1);
-  $("#adminFilesNext").disabled = (adminFilesPage>=maxPage);
-}
 
 // --- Init: try existing token ---
 (async function initAuthFromStorage(){
