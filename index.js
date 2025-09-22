@@ -12,7 +12,8 @@ import {
   S3Client,
   PutObjectCommand,
   GetObjectCommand,
-  HeadObjectCommand, 
+  HeadObjectCommand,
+  DeleteObjectCommand, 
 } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import fetch from "node-fetch";
@@ -503,6 +504,19 @@ app.delete("/files/:id", auth, async (req, res) => {
     req.user.sub,
   ]);
   if (!row) return res.sendStatus(404);
+
+  // 刪除 S3 檔案
+  try {
+    await s3.send(
+      new DeleteObjectCommand({
+        Bucket: process.env.AWS_S3_BUCKET,
+        Key: row.stored_path, // DB 儲存的 key
+      })
+    );
+  } catch (err) {
+    console.error("S3 delete failed:", err);
+    return res.status(500).json({ ok: false, error: "S3 delete failed" });
+  }
 
   const r = await run(`DELETE FROM files WHERE id=$1 AND owner=$2`, [
     req.params.id,
