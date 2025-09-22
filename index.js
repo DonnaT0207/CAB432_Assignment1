@@ -28,6 +28,9 @@ import { CognitoJwtVerifier } from "aws-jwt-verify";
 import crypto from "crypto";
 
 import { pool, one, all, run } from "./db.js";
+import { fromIni } from "@aws-sdk/credential-provider-ini"
+
+
 
 // ----- resolve __dirname -----
 const __filename = fileURLToPath(import.meta.url);
@@ -239,7 +242,14 @@ async function auth(req, res, next) {
 
 
 // === S3 ===
-const s3 = new S3Client({ region: process.env.AWS_REGION });
+
+const s3 = new S3Client({ region: process.env.AWS_REGION,
+  credentials: fromIni({ profile: "default" }) // 指定 default SSO profile
+  // credentials: {
+  //   accessKeyId: process.env.AWS_ACCESS_KEY_ID,
+  //   secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
+  // },
+ });
 const BUCKET = process.env.AWS_S3_BUCKET;
 
 // Multer temp

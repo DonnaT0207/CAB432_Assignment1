@@ -374,7 +374,7 @@ $("#btnUpload").onclick = async ()=>{
 
   // 展示返回体 + 如有预签名链接，放一个可点的 <a>
   if (j && j.downloadUrl){
-    $("#upRes").textContent = JSON.stringify(j,null,2);
+    $("#upRes").text = JSON.stringify(j,null,2);
     const a = document.createElement('a');
     a.href = j.downloadUrl; a.target = '_blank'; a.textContent = 'Open S3 object (1 min)';
     const box = document.createElement('div'); box.style.marginTop='6px'; box.appendChild(a);
