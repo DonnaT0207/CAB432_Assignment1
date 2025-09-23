@@ -13,7 +13,7 @@ import {
   PutObjectCommand,
   GetObjectCommand,
   HeadObjectCommand,
-  DeleteObjectCommand, 
+  DeleteObjectCommand,
 } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import fetch from "node-fetch";
@@ -29,10 +29,13 @@ import {
 import { CognitoJwtVerifier } from "aws-jwt-verify";
 import crypto from "crypto";
 
-import { pool, one, all, run } from "./db.js";
-import { fromIni } from "@aws-sdk/credential-provider-ini"
-
-
+import { initializePool, one, all, run } from "./db.js";
+import { fromIni } from "@aws-sdk/credential-provider-ini";
+// for screte manager
+import {
+  SecretsManagerClient,
+  GetSecretValueCommand,
+} from "@aws-sdk/client-secrets-manager";
 
 // ----- resolve __dirname -----
 const __filename = fileURLToPath(import.meta.url);
@@ -48,12 +51,47 @@ if (fs.existsSync(envPath)) {
     if (!m) continue;
     const k = m[1];
     let v = m[2];
-    if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) {
+    if (
+      (v.startsWith('"') && v.endsWith('"')) ||
+      (v.startsWith("'") && v.endsWith("'"))
+    ) {
       v = v.slice(1, -1);
     }
     if (process.env[k] == null || process.env[k] === "") process.env[k] = v;
   }
 }
+
+// ---- load secret keys from the secret manager ----
+const secret_name = process.env.AWS_SECRET_NAME;
+const client = new SecretsManagerClient({
+  region: process.env.AWS_REGION,
+  credentials: fromIni({ profile: "default" }),
+});
+let response;
+
+try {
+  response = await client.send(
+    new GetSecretValueCommand({
+      SecretId: secret_name,
+      VersionStage: "AWSCURRENT", // VersionStage defaults to AWSCURRENT if unspecified
+    })
+  );
+} catch (error) {
+  // For a list of exceptions thrown, see
+  // https://docs.aws.amazon.com/secretsmanager/latest/apireference/API_GetSecretValue.html
+  throw error;
+}
+
+const secret = JSON.parse(response.SecretString);
+
+// export DB secret key for DB.js to access
+const pool = initializePool({
+  user: secret.PGUSER,
+  password: secret.PGPASSWORD,
+});
+
+// const result = await pool.query("SELECT NOW()");
+// console.log(result.rows);
 
 // ----- config -----
 const PORT = Number(process.env.PORT || 8080);
@@ -64,11 +102,12 @@ const log = (...a) => console.log(new Date().toISOString(), ...a);
 // === Cognito config from env ===
 const COG_REGION = process.env.COGNITO_REGION || "ap-southeast-2";
 const COG_USER_POOL_ID = process.env.COGNITO_USER_POOL_ID || "";
-const COG_CLIENT_ID = process.env.COGNITO_CLIENT_ID || "";
-const COG_CLIENT_SECRET= process.env.COGNITO_CLIENT_SECRET || "";
+const COG_CLIENT_ID = secret.COGNITO_CLIENT_ID || "";
+const COG_CLIENT_SECRET = secret.COGNITO_CLIENT_SECRET || "";
 
 const cogClient = new CognitoIdentityProviderClient({ region: COG_REGION });
-const hasSecret = typeof COG_CLIENT_SECRET === "string" && COG_CLIENT_SECRET.length > 0;
+const hasSecret =
+  typeof COG_CLIENT_SECRET === "string" && COG_CLIENT_SECRET.length > 0;
 
 function makeSecretHash(username) {
   if (!hasSecret) return null;
@@ -102,133 +141,6 @@ const THUMB_DIR = path.join(OUT_DIR, "thumbs");
 for (const d of [UP_DIR, OUT_DIR, THUMB_DIR])
   fs.mkdirSync(d, { recursive: true });
 
-// // ----- database -----
-// const DB_FILE = path.join(DATA_DIR, "app.db");
-// const db = new Database(DB_FILE);
-// db.pragma("journal_mode = WAL");
-// db.pragma("foreign_keys = ON");
-
-// db.exec(`
-// CREATE TABLE IF NOT EXISTS accounts (
-//   owner TEXT PRIMARY KEY,
-//   balance_cents INTEGER NOT NULL DEFAULT 0,
-//   updated_at TEXT NOT NULL
-// );
-
-// CREATE TABLE IF NOT EXISTS files (
-//   id TEXT PRIMARY KEY,
-//   owner TEXT NOT NULL,
-//   filename TEXT NOT NULL,
-//   stored_path TEXT NOT NULL,
-//   size_bytes INTEGER NOT NULL,
-//   mime TEXT,
-//   uploaded_at TEXT NOT NULL,
-//   ext_meta TEXT
-// );
-
-// CREATE TABLE IF NOT EXISTS jobs (
-//   id TEXT PRIMARY KEY,
-//   owner TEXT NOT NULL,
-//   file_id TEXT,
-//   status TEXT NOT NULL,
-//   params TEXT NOT NULL,
-//   progress REAL NOT NULL DEFAULT 0,
-//   log TEXT NOT NULL DEFAULT '',
-//   charged_cents INTEGER NOT NULL DEFAULT 0,
-//   refunded_cents INTEGER NOT NULL DEFAULT 0,
-//   output_path TEXT,
-//   output_name TEXT,
-//   thumbnail_path TEXT,
-//   thumbnail_name TEXT,
-//   created_at TEXT NOT NULL,
-//   updated_at TEXT NOT NULL,
-//   FOREIGN KEY (file_id) REFERENCES files(id) ON DELETE SET NULL
-// );
-
-// CREATE INDEX IF NOT EXISTS idx_jobs_updated_at ON jobs(updated_at);
-// `);
-
-// // 確認是否需要設定這部分，會造成刪除原始檔案時，轉檔檔案也會一起刪除
-// // FOREIGN KEY (file_id) REFERENCES files(id) ON DELETE CASCADE
-// // FOREIGN KEY (file_id) REFERENCES files(id)
-// // file_id TEXT, -- 注意：不再 NOT NULL
-
-// function columnExists(table, col) {
-//   return db
-//     .prepare(`PRAGMA table_info(${table})`)
-//     .all()
-//     .some((c) => c.name === col);
-// }
-// function fkExists(table, refTable) {
-//   return db
-//     .prepare(`PRAGMA foreign_key_list(${table})`)
-//     .all()
-//     .some((r) => r.table === refTable);
-// }
-
-// // minimal migrations
-// (function migrate() {
-//   if (!columnExists("files", "ext_meta"))
-//     db.exec(`ALTER TABLE files ADD COLUMN ext_meta TEXT;`);
-//   for (const c of [
-//     ["thumbnail_path", "TEXT"],
-//     ["thumbnail_name", "TEXT"],
-//     ["progress", "REAL NOT NULL DEFAULT 0"],
-//     ["log", "TEXT NOT NULL DEFAULT ''"],
-//     ["charged_cents", "INTEGER NOT NULL DEFAULT 0"],
-//     ["refunded_cents", "INTEGER NOT NULL DEFAULT 0"],
-//     ["output_path", "TEXT"],
-//     ["output_name", "TEXT"],
-//   ]) {
-//     if (!columnExists("jobs", c[0]))
-//       db.exec(`ALTER TABLE jobs ADD COLUMN ${c[0]} ${c[1]};`);
-//   }
-//   if (!fkExists("jobs", "files")) {
-//     db.exec("PRAGMA foreign_keys=OFF;");
-//     db.exec(`
-//       CREATE TABLE IF NOT EXISTS jobs_new (
-//         id TEXT PRIMARY KEY,
-//         owner TEXT NOT NULL,
-//         file_id TEXT,
-//         status TEXT NOT NULL,
-//         params TEXT NOT NULL,
-//         progress REAL NOT NULL DEFAULT 0,
-//         log TEXT NOT NULL DEFAULT '',
-//         charged_cents INTEGER NOT NULL DEFAULT 0,
-//         refunded_cents INTEGER NOT NULL DEFAULT 0,
-//         output_path TEXT,
-//         output_name TEXT,
-//         thumbnail_path TEXT,
-//         thumbnail_name TEXT,
-//         created_at TEXT NOT NULL,
-//         updated_at TEXT NOT NULL,
-//         FOREIGN KEY (file_id) REFERENCES files(id) ON DELETE SET NULL
-//       );
-//       INSERT INTO jobs_new
-//       SELECT id, owner, file_id, status, COALESCE(params,'{}'), COALESCE(progress,0),
-//              COALESCE(log,''), COALESCE(charged_cents,0), COALESCE(refunded_cents,0),
-//              output_path, output_name, thumbnail_path, thumbnail_name, created_at, updated_at
-//       FROM jobs;
-//       DROP TABLE jobs;
-//       ALTER TABLE jobs_new RENAME TO jobs;
-//       CREATE INDEX IF NOT EXISTS idx_jobs_updated_at ON jobs(updated_at);
-//     `);
-//     db.exec("PRAGMA foreign_keys=ON;");
-//   }
-// })();
-
-// // 预置两个账户
-// db.prepare(
-//   `INSERT INTO accounts(owner,balance_cents,updated_at)
-//    VALUES('admin',1000,datetime('now'))
-//    ON CONFLICT(owner) DO NOTHING;`
-// ).run();
-// db.prepare(
-//   `INSERT INTO accounts(owner,balance_cents,updated_at)
-//    VALUES('user',500,datetime('now'))
-//    ON CONFLICT(owner) DO NOTHING;`
-// ).run();
-
 // ----- app -----
 const app = express();
 app.use(cors());
@@ -240,7 +152,9 @@ app.get("/healthz", (_req, res) => res.json({ ok: true }));
 app.post("/auth/signup", async (req, res) => {
   const { username, password, email } = req.body || {};
   if (!username || !password || !email)
-    return res.status(400).json({ ok: false, error: "username, password, email required" });
+    return res
+      .status(400)
+      .json({ ok: false, error: "username, password, email required" });
   try {
     const params = {
       ClientId: COG_CLIENT_ID,
@@ -253,46 +167,75 @@ app.post("/auth/signup", async (req, res) => {
     const out = await cogClient.send(new SignUpCommand(params));
     res.json({ ok: true, codeDelivery: out.CodeDeliveryDetails || null });
   } catch (e) {
-    res.status(400).json({ ok: false, error: e.name || "SignUpError", message: e.message });
+    res
+      .status(400)
+      .json({ ok: false, error: e.name || "SignUpError", message: e.message });
   }
 });
 
 // ---- admin allowlist from env ----
 const ADM_USERNAMES = (process.env.ADMIN_USERNAMES || "")
-  .split(",").map(s => s.trim().toLowerCase()).filter(Boolean);
+  .split(",")
+  .map((s) => s.trim().toLowerCase())
+  .filter(Boolean);
+  
 const ADM_EMAILS = (process.env.ADMIN_EMAILS || "")
-  .split(",").map(s => s.trim().toLowerCase()).filter(Boolean);
+  .split(",")
+  .map((s) => s.trim().toLowerCase())
+  .filter(Boolean);
 const ADM_GROUPS = (process.env.ADMIN_GROUPS || "")
-  .split(",").map(s => s.trim()).filter(Boolean);
+  .split(",")
+  .map((s) => s.trim())
+  .filter(Boolean);
+console.log("ADM_USERNAMES:", ADM_USERNAMES);
 
-function isAdminByEnv(payload, username) {
+
+
+function isAdminByEnv(username) {
   const u = (username || "").toLowerCase();
-  return ((process.env.ADMIN_USERNAMES || "")
-    .split(",").map(s => s.trim().toLowerCase()).filter(Boolean))
-    .includes(u);
+  return ADM_USERNAMES.includes(u);
 }
 
+
+// function isAdminByEnv(payload, username) {
+//   const u = (username || "").toLowerCase();
+//   return (process.env.ADMIN_USERNAMES || "")
+//     .split(",")
+//     .map((s) => s.trim().toLowerCase())
+//     .filter(Boolean)
+//     .includes(u);
+// }
 
 app.post("/auth/confirm", async (req, res) => {
   const { username, code } = req.body || {};
   if (!username || !code) {
-    return res.status(400).json({ ok: false, error: "username, code required" });
+    return res
+      .status(400)
+      .json({ ok: false, error: "username, code required" });
   }
   try {
-    const params = { ClientId: COG_CLIENT_ID, Username: username, ConfirmationCode: code };
+    const params = {
+      ClientId: COG_CLIENT_ID,
+      Username: username,
+      ConfirmationCode: code,
+    };
     const sh = makeSecretHash(username);
     if (sh) params.SecretHash = sh;
     await cogClient.send(new ConfirmSignUpCommand(params));
     res.json({ ok: true });
   } catch (e) {
-    res.status(400).json({ ok: false, error: e.name || "ConfirmError", message: e.message });
+    res
+      .status(400)
+      .json({ ok: false, error: e.name || "ConfirmError", message: e.message });
   }
 });
 
 app.post("/login", async (req, res) => {
   const { username, password } = req.body || {};
   if (!username || !password) {
-    return res.status(400).json({ ok: false, error: "username, password required" });
+    return res
+      .status(400)
+      .json({ ok: false, error: "username, password required" });
   }
 
   let idToken;
@@ -301,20 +244,26 @@ app.post("/login", async (req, res) => {
     const sh = makeSecretHash(username);
     if (sh) authParams.SECRET_HASH = sh;
 
-    const out = await cogClient.send(new InitiateAuthCommand({
-      AuthFlow: "USER_PASSWORD_AUTH",
-      ClientId: COG_CLIENT_ID,
-      AuthParameters: authParams,
-    }));
+    const out = await cogClient.send(
+      new InitiateAuthCommand({
+        AuthFlow: "USER_PASSWORD_AUTH",
+        ClientId: COG_CLIENT_ID,
+        AuthParameters: authParams,
+      })
+    );
 
     idToken = out?.AuthenticationResult?.IdToken;
     if (!idToken) return res.status(401).json({ ok: false, error: "no token" });
   } catch (e) {
-
     console.error("[/login] Cognito error:", e.name, e.message);
-    return res.status(401).json({ ok: false, error: e.name || "AuthError", message: e.message || "Login failed" });
+    return res
+      .status(401)
+      .json({
+        ok: false,
+        error: e.name || "AuthError",
+        message: e.message || "Login failed",
+      });
   }
-
 
   res.json({ ok: true, authToken: idToken });
 
@@ -327,13 +276,12 @@ app.post("/login", async (req, res) => {
     );
   } catch (e) {
     console.warn("[login] ensure account row failed:", e.message);
-  } 
+  }
 });
 
 // whoami
 app.get("/auth/whoami", auth, (req, res) => {
   res.json({ ok: true, user: req.user });
-  
 });
 
 // auth middleware
@@ -353,7 +301,8 @@ async function auth(req, res, next) {
       : [];
 
     // 判断是否 admin
-    const isAdmin = groups.includes("Admin") || isAdminByEnv(payload, username);
+    // const isAdmin = groups.includes("Admin") || isAdminByEnv(payload, username);
+    const isAdmin = groups.includes("Admin") || isAdminByEnv(username);
 
     req.user = {
       sub: username,
@@ -365,21 +314,22 @@ async function auth(req, res, next) {
 
     next();
   } catch (e) {
-    return res.status(401).json({ ok: false, error: "invalid token", detail: e.message });
+    return res
+      .status(401)
+      .json({ ok: false, error: "invalid token", detail: e.message });
   }
 }
 
-
-
 // === S3 ===
 
-const s3 = new S3Client({ region: process.env.AWS_REGION,
-  credentials: fromIni({ profile: "default" }) // 指定 default SSO profile
+const s3 = new S3Client({
+  region: process.env.AWS_REGION,
+  credentials: fromIni({ profile: "default" }), // 指定 default SSO profile
   // credentials: {
   //   accessKeyId: process.env.AWS_ACCESS_KEY_ID,
   //   secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
   // },
- });
+});
 const BUCKET = process.env.AWS_S3_BUCKET;
 
 // Multer temp
@@ -390,7 +340,9 @@ const storage = multer.diskStorage({
   destination: (_req, _file, cb) => cb(null, tmpDir),
   filename: (_req, file, cb) => cb(null, `${nowTs()}-${file.originalname}`),
 });
-function nowTs(){return Date.now()}
+function nowTs() {
+  return Date.now();
+}
 const upload = multer({ storage });
 
 // helpers
@@ -399,18 +351,21 @@ function listParams(req, opt) {
   const page = Math.max(1, parseInt(req.query.page || "1", 10));
   const size = Math.min(100, Math.max(1, parseInt(req.query.size || "10", 10)));
   const q = (req.query.q || "").trim();
-  const sort = opt.sortWhitelist.includes(req.query.sort) ? req.query.sort : opt.defaultSort;
-  const order = (req.query.order || "desc").toLowerCase() === "asc" ? "asc" : "desc";
+  const sort = opt.sortWhitelist.includes(req.query.sort)
+    ? req.query.sort
+    : opt.defaultSort;
+  const order =
+    (req.query.order || "desc").toLowerCase() === "asc" ? "asc" : "desc";
   const offset = (page - 1) * size;
   return { page, size, offset, q, sort, order };
 }
 
-
 // ----- account -----
 app.get("/me", auth, async (req, res) => {
-  const row = await one("SELECT balance_cents, updated_at FROM accounts WHERE owner=$1", [
-    req.user.sub,
-  ]);
+  const row = await one(
+    "SELECT balance_cents, updated_at FROM accounts WHERE owner=$1",
+    [req.user.sub]
+  );
   res.json({
     user: req.user.sub,
     admin: !!req.user.admin,
@@ -435,7 +390,6 @@ app.post("/accounts/topup", auth, async (req, res) => {
   res.json({ ok: true, added: amount });
 });
 
-
 // ----- files -----
 app.post("/upload-url", auth, async (req, res) => {
   const id = uuidv4();
@@ -455,20 +409,23 @@ app.post("/upload-url", auth, async (req, res) => {
     });
 
     const uploadUrl = await getSignedUrl(s3, command, { expiresIn: 3600 });
-    console.log("Presigned upload URL:", uploadUrl);
-
+    console.log("Presigned upload URL generated!");
 
     // 存 DB（只存 metadata，不存檔案）
-   
+
     const insert = run(
       `INSERT INTO files (id,owner,filename,stored_path,size_bytes,mime,uploaded_at,owner_groups)
       VALUES ($1,$2,$3,$4,$5,$6,now(),$7)`,
-      [id, username, original, s3Key, fileSize, fileType|| null, JSON.stringify(req.user.groups || [])]
+      [
+        id,
+        username,
+        original,
+        s3Key,
+        fileSize,
+        fileType || null,
+        JSON.stringify(req.user.groups || []),
+      ]
     );
-    // db.prepare(
-    //   `INSERT INTO files (id, owner, filename, stored_path, size_bytes, mime, uploaded_at)
-    //    VALUES (?,?,?,?,?,?,datetime('now'))`
-    // ).run(id, username, original, s3Key, fileSize, fileType || null);
 
     res.json({
       ok: true,
@@ -480,63 +437,18 @@ app.post("/upload-url", auth, async (req, res) => {
     console.error("Error generating upload URL:", err);
     res.status(500).json({ ok: false, error: "failed to generate URL" });
   }
-
-  });
-  
-
-
-// app.post("/upload", auth, upload.single("file"), async (req, res) => {
-//   if (!req.file) return res.status(400).json({ ok: false, error: "no file" });
-//   const id = uuidv4();
-//   const original = req.file.originalname || "upload.bin";
-//   const safeName = `${id}-${original.replace(/[^\w.\-]+/g, "_")}`;
-
-//   // ======================================new Added section=====================================
-//   const username = req.user.sub;
-//   const s3Key = `${username}/uploaded/${safeName}`;
-//   const fileStream = fs.createReadStream(req.file.path);
-//   console.log("Temp file path:", req.file.path);
-//   try {
-//     // 上傳到 S3
-//     const command = new PutObjectCommand({
-//       Bucket: BUCKET,
-//       Key: s3Key,
-//       Body: fileStream,
-//       ContentType: req.file.mimetype,
-//     });
-//     await s3.send(command);
-
-//     // 上傳完成，刪掉本地暫存
-//     try {
-//       fs.unlinkSync(req.file.path);
-//     } catch {}
-
-//     // 存資料庫
-//     db.prepare(
-//       `INSERT INTO files (id,owner,filename,stored_path,size_bytes,mime,uploaded_at)
-//        VALUES (?,?,?,?,?,?,datetime('now'))`
-//     ).run(
-//       id,
-//       username,
-//       original,
-//       s3Key,
-//       req.file.size,
-//       req.file.mimetype || null
-//     );
-
-//   } catch (e) {
-//     console.error("Upload failed:", e);
-//     res.status(500).json({ ok: false, error: "upload failed: " + e.message });
-//   }
-// });
-// ======================================new Added section=====================================
-
+});
 
 app.get("/debug/aws", async (_req, res) => {
   try {
     const sts = new STSClient({ region: process.env.AWS_REGION });
     const out = await sts.send(new GetCallerIdentityCommand({}));
-    res.json({ ok: true, account: out.Account, arn: out.Arn, userId: out.UserId });
+    res.json({
+      ok: true,
+      account: out.Account,
+      arn: out.Arn,
+      userId: out.UserId,
+    });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.name, message: e.message });
   }
@@ -564,7 +476,10 @@ app.get("/files", auth, async (req, res) => {
   }
   const whereSql = `WHERE ${where.join(" AND ")}`;
 
-  const totalRow = await one(`SELECT COUNT(*)::int AS c FROM files ${whereSql}`, params);
+  const totalRow = await one(
+    `SELECT COUNT(*)::int AS c FROM files ${whereSql}`,
+    params
+  );
   const total = totalRow?.c ?? 0;
 
   const rows = await all(
@@ -594,7 +509,9 @@ app.get("/files/:id/meta", auth, async (req, res) => {
 // OpenSubtitles metadata
 app.post("/files/:id/subs", auth, async (req, res) => {
   if (!OPENSUBTITLES_API_KEY)
-    return res.status(400).json({ ok: false, error: "OPENSUBTITLES_API_KEY missing" });
+    return res
+      .status(400)
+      .json({ ok: false, error: "OPENSUBTITLES_API_KEY missing" });
 
   const f = await one(`SELECT id FROM files WHERE id=$1 AND owner=$2`, [
     req.params.id,
@@ -603,21 +520,36 @@ app.post("/files/:id/subs", auth, async (req, res) => {
   if (!f) return res.sendStatus(404);
 
   const query = String(req.body?.query || "").trim();
-  const languages = Array.isArray(req.body?.languages) ? req.body.languages : ["en"];
-  if (!query) return res.status(400).json({ ok: false, error: "query required" });
+  const languages = Array.isArray(req.body?.languages)
+    ? req.body.languages
+    : ["en"];
+  if (!query)
+    return res.status(400).json({ ok: false, error: "query required" });
 
   try {
     const url =
       `https://api.opensubtitles.com/api/v1/subtitles?` +
-      `query=${encodeURIComponent(query)}&languages=${encodeURIComponent(languages.join(","))}` +
+      `query=${encodeURIComponent(query)}&languages=${encodeURIComponent(
+        languages.join(",")
+      )}` +
       `&order_by=downloads&order_direction=desc&ai_translated=exclude`;
     const r = await fetch(url, {
       headers: { "Api-Key": OPENSUBTITLES_API_KEY, Accept: "application/json" },
     });
-    if (!r.ok) return res.status(502).json({ ok: false, error: `OpenSubtitles HTTP ${r.status}` });
+    if (!r.ok)
+      return res
+        .status(502)
+        .json({ ok: false, error: `OpenSubtitles HTTP ${r.status}` });
     const j = await r.json();
     const top = Array.isArray(j?.data) ? j.data.slice(0, 5) : [];
-    const payload = { opensubtitles: { query, languages, total: j?.total_count ?? top.length, top } };
+    const payload = {
+      opensubtitles: {
+        query,
+        languages,
+        total: j?.total_count ?? top.length,
+        top,
+      },
+    };
     await run(
       `UPDATE files
          SET ext_meta = COALESCE(ext_meta, '{}'::jsonb) || $1::jsonb
@@ -631,10 +563,10 @@ app.post("/files/:id/subs", auth, async (req, res) => {
 });
 
 app.delete("/files/:id", auth, async (req, res) => {
-  const row = await one(`SELECT stored_path FROM files WHERE id=$1 AND owner=$2`, [
-    req.params.id,
-    req.user.sub,
-  ]);
+  const row = await one(
+    `SELECT stored_path FROM files WHERE id=$1 AND owner=$2`,
+    [req.params.id, req.user.sub]
+  );
   if (!row) return res.sendStatus(404);
 
   try {
@@ -650,29 +582,26 @@ app.delete("/files/:id", auth, async (req, res) => {
     return res.status(500).json({ ok: false, error: "S3 delete failed" });
   }
 
-  //   const r = db
-  //   .prepare(`DELETE FROM files WHERE stored_path=?`)
-  //   .run(row.stored_path);
-  //   console.log("stored_path:" + row.stored_path);
-  // if (r.changes !== 1)
-  //   return res.status(500).json({ ok: false, error: "DB record delete failed." });
-
   // 刪除 DB 紀錄
 
   const r = await run(`DELETE FROM files WHERE id=$1 AND owner=$2`, [
     req.params.id,
     req.user.sub,
   ]);
-  
-  if (r.rowCount !== 1) return res.status(500).json({ ok: false, error: "DB record delete failed." });
+
+  if (r.rowCount !== 1)
+    return res
+      .status(500)
+      .json({ ok: false, error: "DB record delete failed." });
 
   res.json({ ok: true });
 });
 
 // ----- admin: list all users' files -----
 app.get("/admin/files", auth, async (req, res) => {
-  if (!req.user?.admin) return res.status(403).json({ ok: false, error: "forbidden" });
-
+  console.log("req.user:", req.user);
+  if (!req.user?.admin)
+    return res.status(403).json({ ok: false, error: "forbidden" });
 
   const { page, size, offset, q, sort, order } = listParams(req, {
     sortWhitelist: ["uploaded_at", "size_bytes", "filename", "owner"],
@@ -687,7 +616,10 @@ app.get("/admin/files", auth, async (req, res) => {
   }
   const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
 
-  const totalRow = await one(`SELECT COUNT(*)::int AS c FROM files ${whereSql}`, params);
+  const totalRow = await one(
+    `SELECT COUNT(*)::int AS c FROM files ${whereSql}`,
+    params
+  );
   const total = totalRow?.c ?? 0;
 
   const rows = await all(
@@ -707,10 +639,10 @@ app.get("/admin/files", auth, async (req, res) => {
 // download (self-only)
 
 app.get("/download/original/:fileId", auth, async (req, res) => {
-  const row = await one(`SELECT stored_path, filename FROM files WHERE id=$1 AND owner=$2`, [
-    req.params.fileId,
-    req.user.sub,
-  ]);
+  const row = await one(
+    `SELECT stored_path, filename FROM files WHERE id=$1 AND owner=$2`,
+    [req.params.fileId, req.user.sub]
+  );
   if (!row) return res.sendStatus(404);
 
   try {
@@ -779,7 +711,10 @@ app.get("/jobs", auth, async (req, res) => {
   }
   const whereSql = `WHERE ${where.join(" AND ")}`;
 
-  const totalRow = await one(`SELECT COUNT(*)::int AS c FROM jobs ${whereSql}`, params);
+  const totalRow = await one(
+    `SELECT COUNT(*)::int AS c FROM jobs ${whereSql}`,
+    params
+  );
   const total = totalRow?.c ?? 0;
 
   const rows = await all(
@@ -809,10 +744,12 @@ app.get("/jobs/:id/logs", auth, async (req, res) => {
 });
 
 app.get("/jobs/:id/thumbnail", auth, async (req, res) => {
-  const row = await one(`SELECT owner, thumbnail_path, thumbnail_name FROM jobs WHERE id=$1`, [
-    req.params.id,
-  ]);
-  if (!row || row.owner !== req.user.sub || !row.thumbnail_path) return res.sendStatus(404);
+  const row = await one(
+    `SELECT owner, thumbnail_path, thumbnail_name FROM jobs WHERE id=$1`,
+    [req.params.id]
+  );
+  if (!row || row.owner !== req.user.sub || !row.thumbnail_path)
+    return res.sendStatus(404);
 
   try {
     const cmd = new GetObjectCommand({
@@ -831,16 +768,17 @@ app.get("/jobs/:id/thumbnail", auth, async (req, res) => {
 });
 
 app.get("/download/transcoded/:jobId", auth, async (req, res) => {
-  const j = await one(`SELECT owner,status,output_path,output_name FROM jobs WHERE id=$1`, [
-    req.params.jobId,
-  ]);
+  const j = await one(
+    `SELECT owner,status,output_path,output_name FROM jobs WHERE id=$1`,
+    [req.params.jobId]
+  );
   if (!j || j.owner !== req.user.sub) return res.sendStatus(404);
   if (j.status !== "completed" || !j.output_path)
     return res.status(409).json({ ok: false, error: "not ready" });
 
   try {
     const command = new GetObjectCommand({
-      Bucket: process.env.AWS_S3_BUCKET,
+      Bucket: BUCKET,
       Key: j.output_path, // 這裡必須是 S3 Key
       ResponseContentDisposition: `attachment; filename="${path.basename(
         j.output_name || j.output_path
@@ -870,12 +808,17 @@ app.post("/transcode/:fileId", auth, async (req, res) => {
 
   let jobId;
   try {
-    jobId = await createJobWithCharge(req.user.sub, f.id, TRANSCODE_COST_CENTS, {
-      format,
-      crf,
-      preset,
-      scale,
-    });
+    jobId = await createJobWithCharge(
+      req.user.sub,
+      f.id,
+      TRANSCODE_COST_CENTS,
+      {
+        format,
+        crf,
+        preset,
+        scale,
+      }
+    );
   } catch (e) {
     if (e.message === "INSUFFICIENT_FUNDS")
       return res.status(402).json({ ok: false, error: "insufficient funds" });
@@ -884,14 +827,19 @@ app.post("/transcode/:fileId", auth, async (req, res) => {
 
   // 立即响应
   res.json({ ok: true, jobId });
-  await run(`UPDATE jobs SET status='running', updated_at=now() WHERE id=$1`, [jobId]);
+  await run(`UPDATE jobs SET status='running', updated_at=now() WHERE id=$1`, [
+    jobId,
+  ]);
 
   // 单任务专用 DB 连接（避免连接暴增）
   const dbConn = await pool.connect();
 
   // 输出文件路径（可能在失败时清理）
   const outId = uuidv4();
-  const outName = `${outId}-${path.basename(f.filename, path.extname(f.filename))}.${format}`;
+  const outName = `${outId}-${path.basename(
+    f.filename,
+    path.extname(f.filename)
+  )}.${format}`;
   const outPath = path.join(OUT_DIR, outName);
   let thumbPath = null;
 
@@ -917,7 +865,6 @@ app.post("/transcode/:fileId", auth, async (req, res) => {
         await flushLog();
       }, 800);
     }
-
   };
   let lastProgAt = 0;
   const tickProgress = async () => {
@@ -937,9 +884,10 @@ app.post("/transcode/:fileId", auth, async (req, res) => {
   try {
     // 1) 从 S3 读原始文件并转码到本地
     await new Promise(async (resolve, reject) => {
-      const s3Object = await s3.send(new GetObjectCommand({ Bucket: BUCKET, Key: f.stored_path }));
+      const s3Object = await s3.send(
+        new GetObjectCommand({ Bucket: BUCKET, Key: f.stored_path })
+      );
       const s3Stream = s3Object.Body;
-
 
       ffmpeg(s3Stream)
         .addOptions([
@@ -948,8 +896,12 @@ app.post("/transcode/:fileId", auth, async (req, res) => {
           `scale=${scale}`,
           "-preset",
           preset,
-          ...(format === "mp4" ? ["-vcodec", "libx264", "-crf", crf, "-movflags", "faststart"] : []),
-          ...(format === "webm" ? ["-vcodec", "libvpx-vp9", "-crf", crf, "-b:v", "0"] : []),
+          ...(format === "mp4"
+            ? ["-vcodec", "libx264", "-crf", crf, "-movflags", "faststart"]
+            : []),
+          ...(format === "webm"
+            ? ["-vcodec", "libvpx-vp9", "-crf", crf, "-b:v", "0"]
+            : []),
         ])
         .on("start", (cmd) => appendLog("FFMPEG START: " + cmd))
         .on("stderr", async (line) => {
@@ -980,7 +932,10 @@ app.post("/transcode/:fileId", auth, async (req, res) => {
 
     // 3) 生成缩略图（本地）
     fs.mkdirSync(THUMB_DIR, { recursive: true });
-    const thumbName = `${uuidv4()}-${path.basename(f.filename, path.extname(f.filename))}.jpg`;
+    const thumbName = `${uuidv4()}-${path.basename(
+      f.filename,
+      path.extname(f.filename)
+    )}.jpg`;
     thumbPath = path.join(THUMB_DIR, thumbName);
     await new Promise((resolve, reject) => {
       ffmpeg(outPath)
@@ -1027,7 +982,10 @@ app.post("/transcode/:fileId", auth, async (req, res) => {
   } catch (e) {
     await appendLog("ERROR: " + e.message);
     await flushLog();
-    await dbConn.query(`UPDATE jobs SET status='failed', updated_at=now() WHERE id=$1`, [jobId]);
+    await dbConn.query(
+      `UPDATE jobs SET status='failed', updated_at=now() WHERE id=$1`,
+      [jobId]
+    );
 
     // 失败退款（幂等）
     try {
@@ -1072,9 +1030,9 @@ app.get("/outputs", auth, (_req, res) => {
   res.json({ items });
 });
 
-
+// file_id TEXT, -- 注意：不再 NOT NULL
 async function ensureTables() {
-    // 指定 schema
+  // 指定 schema
   await run(`SET search_path TO s237;`);
   // 建立表格
   await run(`
@@ -1116,10 +1074,8 @@ async function ensureTables() {
 }
 await ensureTables();
 
-
 // ----- start -----
 
 app.listen(PORT, () => {
   log(`Server listening on http://localhost:${PORT}`);
-  log(`DATA_DIR: ${DATA_DIR}`);
 });
