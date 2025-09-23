@@ -2,26 +2,26 @@
 import pg from "pg";
 import fs from "fs";
 import path from "path";
-// import 'dotenv/config';
+import 'dotenv/config';
 
 // 先加载 .env，确保 Pool 能拿到 PG* 变量
-const envPath = path.join(process.cwd(), ".env");
-if (fs.existsSync(envPath)) {
-  for (const raw of fs.readFileSync(envPath, "utf8").split(/\r?\n/)) {
-    const s = raw.trim();
-    if (!s || s.startsWith("#")) continue;
-    const m = /^([\w.-]+)\s*=\s*(.*)$/.exec(s);
-    if (!m) continue;
-    const k = m[1];
-    let v = m[2];
-    if (
-      (v.startsWith('"') && v.endsWith('"')) ||
-      (v.startsWith("'") && v.endsWith("'"))
-    )
-      v = v.slice(1, -1);
-    if (process.env[k] === undefined) process.env[k] = v;
-  }
-}
+// const envPath = path.join(process.cwd(), ".env");
+// if (fs.existsSync(envPath)) {
+//   for (const raw of fs.readFileSync(envPath, "utf8").split(/\r?\n/)) {
+//     const s = raw.trim();
+//     if (!s || s.startsWith("#")) continue;
+//     const m = /^([\w.-]+)\s*=\s*(.*)$/.exec(s);
+//     if (!m) continue;
+//     const k = m[1];
+//     let v = m[2];
+//     if (
+//       (v.startsWith('"') && v.endsWith('"')) ||
+//       (v.startsWith("'") && v.endsWith("'"))
+//     )
+//       v = v.slice(1, -1);
+//     if (process.env[k] === undefined) process.env[k] = v;
+//   }
+// }
 
 let pool;
 // export const pool = new pg.Pool({

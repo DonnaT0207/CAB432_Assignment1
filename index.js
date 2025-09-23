@@ -36,30 +36,12 @@ import {
   SecretsManagerClient,
   GetSecretValueCommand,
 } from "@aws-sdk/client-secrets-manager";
+import 'dotenv/config';
 
 // ----- resolve __dirname -----
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// ----- tiny .env loader -----
-const envPath = path.join(process.cwd(), ".env");
-if (fs.existsSync(envPath)) {
-  for (const raw of fs.readFileSync(envPath, "utf8").split(/\r?\n/)) {
-    const s = raw.trim();
-    if (!s || s.startsWith("#")) continue;
-    const m = /^([\w.-]+)\s*=\s*(.*)$/.exec(s);
-    if (!m) continue;
-    const k = m[1];
-    let v = m[2];
-    if (
-      (v.startsWith('"') && v.endsWith('"')) ||
-      (v.startsWith("'") && v.endsWith("'"))
-    ) {
-      v = v.slice(1, -1);
-    }
-    if (process.env[k] == null || process.env[k] === "") process.env[k] = v;
-  }
-}
 
 // ---- load secret keys from the secret manager ----
 const secret_name = process.env.AWS_SECRET_NAME;
@@ -1031,9 +1013,13 @@ app.get("/outputs", auth, (_req, res) => {
 });
 
 // file_id TEXT, -- 注意：不再 NOT NULL
+
+const schema = process.env.PGSCHEMA || "public";
 async function ensureTables() {
-  // 指定 schema
-  await run(`SET search_path TO s237;`);
+  // 指定 schema========================change to the schema name
+  // await run(`SET search_path TO s237;`);
+  await run(`SET search_path TO "${schema}";`);
+
   // 建立表格
   await run(`
     CREATE TABLE IF NOT EXISTS accounts (
