@@ -568,39 +568,104 @@ app.post("/files/:id/subs", auth, async (req, res) => {
 
 
 
+// app.delete("/files/:id", auth, async (req, res) => {
+//   const row = await one(
+//     `SELECT stored_path FROM files WHERE id=$1 AND owner=$2`,
+//     [req.params.id, req.user.sub]
+//   );
+//   if (!row) return res.sendStatus(404);
+
+//   try {
+//     // 刪除 S3 檔案
+//     await s3.send(
+//       new DeleteObjectCommand({
+//         Bucket: BUCKET,
+//         Key: row.stored_path, // 這裡就是存 DB 的 Key
+//       })
+//     );
+//   } catch (e) {
+//     log("S3 delete warn:", e.message);
+//     return res.status(500).json({ ok: false, error: "S3 delete failed" });
+//   }
+
+//   // 刪除 DB 紀錄
+//   const r = await run(`DELETE FROM files WHERE id=$1 AND owner=$2`, [
+//     req.params.id,
+//     req.user.sub,
+//   ]);
+
+//   if (r.rowCount !== 1)
+//     return res
+//       .status(500)
+//       .json({ ok: false, error: "DB record delete failed." });
+
+//   res.json({ ok: true });
+// });
+
 app.delete("/files/:id", auth, async (req, res) => {
+  const fileId = req.params.id;
+  const owner = req.user.sub;
+
+  // 先查出 S3 Key（stored_path），以便稍后异步删除
   const row = await one(
     `SELECT stored_path FROM files WHERE id=$1 AND owner=$2`,
-    [req.params.id, req.user.sub]
+    [fileId, owner]
   );
   if (!row) return res.sendStatus(404);
+  const s3Key = row.stored_path;
 
+  // 1) 事务：解除 jobs 关联并删除 files 记录
+  const client = await pool.connect();
   try {
-    // 刪除 S3 檔案
-    await s3.send(
-      new DeleteObjectCommand({
-        Bucket: BUCKET,
-        Key: row.stored_path, // 這裡就是存 DB 的 Key
-      })
+    await client.query("BEGIN");
+
+    // 解除关联：不让历史转码任务受到 FK/业务影响
+    await client.query(
+      `UPDATE jobs SET file_id = NULL WHERE file_id=$1 AND owner=$2`,
+      [fileId, owner]
     );
+
+    // 删除文件记录
+    const del = await client.query(
+      `DELETE FROM files WHERE id=$1 AND owner=$2`,
+      [fileId, owner]
+    );
+
+    if (del.rowCount !== 1) {
+      await client.query("ROLLBACK");
+      return res
+        .status(404)
+        .json({ ok: false, error: "file not found or already deleted" });
+    }
+
+    await client.query("COMMIT");
   } catch (e) {
-    log("S3 delete warn:", e.message);
-    return res.status(500).json({ ok: false, error: "S3 delete failed" });
+    await client.query("ROLLBACK");
+    console.error("[DELETE /files/:id] DB error:", e);
+    return res.status(500).json({ ok: false, error: "DB delete failed" });
+  } finally {
+    client.release();
   }
 
-  // 刪除 DB 紀錄
-  const r = await run(`DELETE FROM files WHERE id=$1 AND owner=$2`, [
-    req.params.id,
-    req.user.sub,
-  ]);
-
-  if (r.rowCount !== 1)
-    return res
-      .status(500)
-      .json({ ok: false, error: "DB record delete failed." });
-
+  // 2) 先立即回应前端成功，让 UI 能刷新
   res.json({ ok: true });
+
+  // 3) S3 删除改为“尽力而为”，失败只打日志，不影响用户体验
+  (async () => {
+    try {
+      await s3.send(
+        new DeleteObjectCommand({
+          Bucket: BUCKET,
+          Key: s3Key,
+        })
+      );
+    } catch (e) {
+      // S3 删除失败一般不阻断流程（可能文件早已不存在）
+      console.warn("[DELETE /files/:id] S3 delete warn:", e?.message || e);
+    }
+  })().catch(() => {});
 });
+
 
 // ----- admin: list all users' files -----
 app.get("/admin/files", auth, async (req, res) => {
