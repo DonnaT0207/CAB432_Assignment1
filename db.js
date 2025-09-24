@@ -39,17 +39,29 @@ export function initializePool(secretConfig) {
     ssl: { rejectUnauthorized: false },
   });
 
-  pool.on("connect", async (c) => {
-    const schema = process.env.PGSCHEMA || "public";
+  pool.on("connect", async (client) => {
+    const schema = process.env.PGSCHEMA || "public"; // 從 .env 讀取 schema
     try {
-      await c.query(`SET search_path TO ${schema}, public;`);
-      await c.query(`SET statement_timeout = 15000;`); // 防止长时间占用连接
-    } catch {}
+      // 設定 search_path，並加上 public 作 fallback
+      await client.query(`SET search_path TO ${schema}, public;`);
+      // 設定 statement_timeout 防止長時間占用
+      await client.query(`SET statement_timeout = 15000;`);
+    } catch (err) {
+      console.error("Failed to configure client:", err);
+    }
   });
+
+//   pool.on("connect", async (c) => {
+//     const schema = process.env.PGSCHEMA || "public";
+//     try {
+//       await c.query(`SET search_path TO ${schema}, public;`);
+//       await c.query(`SET statement_timeout = 15000;`); // 防止长时间占用连接
+//     } catch {}
+//   });
   
-  pool.on('connect', client => {
-  client.query('SET search_path TO s400, public;').catch(() => {});
-});
+//   pool.on('connect', client => {
+//   client.query('SET search_path TO s400, public;').catch(() => {});
+// });
 
 
   return pool;

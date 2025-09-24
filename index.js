@@ -1137,7 +1137,15 @@ await ensureTables();
 
 // ----- start -----
 
-app.listen(PORT, "0.0.0.0",() => {
-  log(`Server listening on http://0.0.0.0:${PORT}`);
-  // log(`Server listening on http://localhost:${PORT}`);
+const HOST = process.env.IS_EC2 === "true" ? "0.0.0.0" : "localhost";
+
+app.listen(PORT, HOST, () => {
+  const displayHost = HOST === "0.0.0.0" ? process.env.EC2_PUBLIC_URL || "0.0.0.0" : "localhost";
+  console.log(`Server listening on http://${displayHost}:${PORT}`);
 });
+
+
+// app.listen(PORT, "0.0.0.0",() => {
+//   log(`Server listening on http://0.0.0.0:${PORT}`);
+//   // log(`Server listening on http://localhost:${PORT}`);
+// });
