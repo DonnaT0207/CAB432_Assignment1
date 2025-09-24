@@ -104,7 +104,7 @@ const s3 = new S3Client({
   region: AWS_REGION,
   credentials: creds,
 });
-const BUCKET = process.env.AWS_S3_BUCKET;
+const BUCKET = CONFIG.AWS_S3_BUCKET;
 
 // export DB secret key for DB.js to access
 const pool = initializePool({
