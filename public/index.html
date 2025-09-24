@@ -620,6 +620,7 @@
       if (adminSec) {
         if (isAdmin) {
           adminSec.style.display = 'block';
+          $("#adminSection").style.display = "block";
           ["adminFilesQ", "adminFilesSort", "adminFilesOrder", "adminFilesSize", "btnAdminList"].forEach(id => { const el = document.getElementById(id); if (el) el.disabled = false; });
           adminFilesPage = 1; listAdminFiles(); // 初次加载
         } else {
@@ -974,6 +975,71 @@
     $("#adminFilesSort").onchange = () => { adminFilesPage = 1; listAdminFiles(); };
     $("#adminFilesOrder").onchange = () => { adminFilesPage = 1; listAdminFiles(); };
     $("#adminFilesSize").onchange = () => { adminFilesPage = 1; listAdminFiles(); };
+
+    async function listAdminFiles() {
+      const q = encodeURIComponent($("#adminFilesQ").value || "");
+      const sort = $("#adminFilesSort").value;
+      const order = $("#adminFilesOrder").value;
+      const size = parseInt($("#adminFilesSize").value, 10) || 10;
+
+      const r = await guardFetch(
+        `${BASE}/admin/files?page=${adminFilesPage}&size=${size}&sort=${sort}&order=${order}${q ? `&q=${q}` : ""}`
+      );
+      if (!r.ok) {
+        toast('Failed to load admin files', 'error');
+        return;
+      }
+      const j = await r.json().catch(() => null);
+
+      const total = j?.total || 0;
+      const items = j?.items || [];
+      const box = $("#adminFiles");
+      box.innerHTML = '';
+
+      if (!items.length) {
+        box.innerHTML = '<div class="empty">No files found.</div>';
+      } else {
+        items.forEach(it => {
+          // 规范化 group 显示
+          const groupsArr = Array.isArray(it.owner_groups)
+            ? it.owner_groups
+            : (typeof it.owner_groups === 'string' && it.owner_groups ? [it.owner_groups] : []);
+          const groupsLabel = groupsArr.length ? groupsArr.join(', ') : '—';
+
+          const el = document.createElement('div');
+          el.className = 'item';
+          el.innerHTML = `
+            <div class="item-head">
+              <!-- 左侧：文件名（和 Your files 一样） -->
+              <div class="item-title">${escapeHtml(it.filename)}</div>
+
+              <!-- 右侧：只显示 Owner / Groups 两个 pill（不提供任何按钮） -->
+              <div class="actions">
+                <span class="pill"><b>Owner:</b>&nbsp;${escapeHtml(it.owner)}</span>
+                <span class="pill"><b>Groups:</b>&nbsp;${escapeHtml(groupsLabel)}</span>
+              </div>
+            </div>
+
+            <!-- 下方细灰行：与 Your files 匹配（id / bytes / uploaded） -->
+            <div class="small muted">
+              id: <code>${escapeHtml(it.id)}</code>
+              <span class="sep">•</span> ${Number(it.size_bytes || 0)} bytes
+              <span class="sep">•</span> uploaded: ${escapeHtml(it.uploaded_at || '-')}
+            </div>
+          `;
+          box.appendChild(el);
+        });
+      }
+
+      // 分页状态（对齐 Your files 的体验）
+      $("#adminFilesPage").textContent = String(j?.page || adminFilesPage);
+      $("#adminFilesTotal").textContent = `Total: ${total}`;
+      const maxPage = Math.max(1, Math.ceil(total / size));
+      $("#adminFilesPrev").disabled = (adminFilesPage <= 1);
+      $("#adminFilesNext").disabled = (adminFilesPage >= maxPage);
+    }
+
+
 
     // --- Init: try existing token ---
     (async function initAuthFromStorage() {

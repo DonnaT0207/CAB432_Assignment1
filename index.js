@@ -197,15 +197,6 @@ function isAdminByEnv(username) {
 }
 
 
-// function isAdminByEnv(payload, username) {
-//   const u = (username || "").toLowerCase();
-//   return (process.env.ADMIN_USERNAMES || "")
-//     .split(",")
-//     .map((s) => s.trim().toLowerCase())
-//     .filter(Boolean)
-//     .includes(u);
-// }
-
 app.post("/auth/confirm", async (req, res) => {
   const { username, code } = req.body || {};
   if (!username || !code) {
@@ -599,7 +590,6 @@ app.delete("/files/:id", auth, async (req, res) => {
 
 // ----- admin: list all users' files -----
 app.get("/admin/files", auth, async (req, res) => {
-  console.log("req.user:", req.user);
   if (!req.user?.admin)
     return res.status(403).json({ ok: false, error: "forbidden" });
 
@@ -629,6 +619,8 @@ app.get("/admin/files", auth, async (req, res) => {
     LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
     [...params, size, offset]
   );
+
+  console.log("[/admin/files] whereSql=", whereSql, "params=", params, "total=", total);
 
   res.set("X-Total-Count", String(total));
   res.set("X-Page", String(page));
@@ -1033,7 +1025,7 @@ app.get("/outputs", auth, (_req, res) => {
 // file_id TEXT, -- 注意：不再 NOT NULL
 async function ensureTables() {
   // 指定 schema
-  await run(`SET search_path TO s237;`);
+  await run(`SET search_path TO s400;`);
   // 建立表格
   await run(`
     CREATE TABLE IF NOT EXISTS accounts (
