@@ -403,7 +403,6 @@ app.post("/upload-url", auth, async (req, res) => {
     console.log("Presigned upload URL generated!");
 
     // 存 DB（只存 metadata，不存檔案）
-
     const insert = run(
       `INSERT INTO files (id,owner,filename,stored_path,size_bytes,mime,uploaded_at,owner_groups)
       VALUES ($1,$2,$3,$4,$5,$6,now(),$7)`,
@@ -497,13 +496,15 @@ app.get("/files/:id/meta", auth, async (req, res) => {
   res.json({ ok: true, meta });
 });
 
-// OpenSubtitles metadata
+// ----- 简化版 OpenSubtitles subtitles meta -----
 app.post("/files/:id/subs", auth, async (req, res) => {
-  if (!OPENSUBTITLES_API_KEY)
-    return res
-      .status(400)
-      .json({ ok: false, error: "OPENSUBTITLES_API_KEY missing" });
+  if (!OPENSUBTITLES_API_KEY) {
+    return res.status(400).json({ ok: false, error: "OPENSUBTITLES_API_KEY missing" });
+  }
 
+  const OS_USER_AGENT = process.env.OPENSUBTITLES_USER_AGENT || "video-api-client/1.0";
+
+  // 确认文件存在
   const f = await one(`SELECT id FROM files WHERE id=$1 AND owner=$2`, [
     req.params.id,
     req.user.sub,
@@ -511,47 +512,61 @@ app.post("/files/:id/subs", auth, async (req, res) => {
   if (!f) return res.sendStatus(404);
 
   const query = String(req.body?.query || "").trim();
-  const languages = Array.isArray(req.body?.languages)
-    ? req.body.languages
-    : ["en"];
-  if (!query)
+  const languages = Array.isArray(req.body?.languages) ? req.body.languages : ["en"];
+  if (!query) {
     return res.status(400).json({ ok: false, error: "query required" });
+  }
 
   try {
     const url =
       `https://api.opensubtitles.com/api/v1/subtitles?` +
-      `query=${encodeURIComponent(query)}&languages=${encodeURIComponent(
-        languages.join(",")
-      )}` +
-      `&order_by=downloads&order_direction=desc&ai_translated=exclude`;
+      `query=${encodeURIComponent(query)}&languages=${encodeURIComponent(languages.join(","))}` +
+      `&order_by=downloads&order_direction=desc`;
+
     const r = await fetch(url, {
-      headers: { "Api-Key": OPENSUBTITLES_API_KEY, Accept: "application/json" },
+      headers: {
+        "Api-Key": OPENSUBTITLES_API_KEY,
+        "User-Agent": OS_USER_AGENT,
+        "Accept": "application/json",
+      },
     });
-    if (!r.ok)
-      return res
-        .status(502)
-        .json({ ok: false, error: `OpenSubtitles HTTP ${r.status}` });
-    const j = await r.json();
+
+    const text = await r.text();
+    if (!r.ok) {
+      return res.status(502).json({
+        ok: false,
+        error: "OpenSubtitlesHTTP",
+        message: `HTTP ${r.status}: ${text}`,
+      });
+    }
+
+    const j = JSON.parse(text);
     const top = Array.isArray(j?.data) ? j.data.slice(0, 5) : [];
+
     const payload = {
       opensubtitles: {
         query,
         languages,
         total: j?.total_count ?? top.length,
         top,
+        fetched_at: new Date().toISOString(),
       },
     };
+
     await run(
       `UPDATE files
          SET ext_meta = COALESCE(ext_meta, '{}'::jsonb) || $1::jsonb
        WHERE id=$2 AND owner=$3`,
       [JSON.stringify(payload), req.params.id, req.user.sub]
     );
-    res.json({ ok: true, count: top.length });
+
+    res.json({ ok: true, count: top.length, meta: payload });
   } catch (e) {
-    res.status(500).json({ ok: false, error: e.message });
+    res.status(500).json({ ok: false, error: "SubsFetchError", message: e.message });
   }
 });
+
+
 
 app.delete("/files/:id", auth, async (req, res) => {
   const row = await one(
@@ -574,7 +589,6 @@ app.delete("/files/:id", auth, async (req, res) => {
   }
 
   // 刪除 DB 紀錄
-
   const r = await run(`DELETE FROM files WHERE id=$1 AND owner=$2`, [
     req.params.id,
     req.user.sub,
@@ -619,8 +633,6 @@ app.get("/admin/files", auth, async (req, res) => {
     LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
     [...params, size, offset]
   );
-
-  console.log("[/admin/files] whereSql=", whereSql, "params=", params, "total=", total);
 
   res.set("X-Total-Count", String(total));
   res.set("X-Page", String(page));
