@@ -37,11 +37,21 @@ import {
   GetSecretValueCommand,
 } from "@aws-sdk/client-secrets-manager";
 import { defaultProvider } from "@aws-sdk/credential-provider-node";
+import { SSMClient, GetParameterCommand } from "@aws-sdk/client-ssm";
+// import { CONFIG, initConfig } from "./config.js";
+
 import "dotenv/config";
+//  -----public variables from env file----------------------
+const AWS_REGION = process.env.AWS_REGION;
 
 // ----- resolve __dirname -----
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+export let CONFIG = {};
+
+
+(async () => {
 
 // Utility: decide how to load credentials
 async function getCredentialsProvider() {
@@ -53,20 +63,25 @@ async function getCredentialsProvider() {
 }
 const creds = await getCredentialsProvider();
 
-// if (!process.env.AWS_PROFILE) {
-//   throw new Error(
-//     "No AWS_PROFILE found. Please set AWS_PROFILE for local dev."
-//   );
-// }
-// return fromIni({ profile: "default" });
-// }
+// ---- load params from the param store ----
+
+const client_param = new SSMClient({
+  region: AWS_REGION,
+  credentials: creds,
+});
+
+const paramResponse = await client_param.send(
+  new GetParameterCommand({ Name: process.env.PARAMETER_NAME, WithDecryption: true })
+);
+CONFIG = JSON.parse(paramResponse.Parameter?.Value || "{}");
+console.log("COGNITO_USER_POOL_ID222:"+CONFIG.COGNITO_USER_POOL_ID);
+
 
 // ---- load secret keys from the secret manager ----
 const secret_name = process.env.AWS_SECRET_NAME;
 const client = new SecretsManagerClient({
-  region: process.env.AWS_REGION,
+  region: AWS_REGION,
   credentials: creds,
-  // credentials: fromIni({ profile: "default" }),
 });
 let response;
 
@@ -86,7 +101,7 @@ const secret = JSON.parse(response.SecretString);
 
 // === S3 ===
 const s3 = new S3Client({
-  region: process.env.AWS_REGION,
+  region: AWS_REGION,
   credentials: creds,
 });
 const BUCKET = process.env.AWS_S3_BUCKET;
@@ -95,6 +110,10 @@ const BUCKET = process.env.AWS_S3_BUCKET;
 const pool = initializePool({
   user: secret.PGUSER,
   password: secret.PGPASSWORD,
+  client: CONFIG.DB_CLIENT,
+  host: CONFIG.PGHOST,
+  port: CONFIG.PGPORT,
+  database: CONFIG.PGDATABASE,
 });
 
 // ----- config -----
@@ -104,12 +123,12 @@ ffmpeg.setFfmpegPath(ffmpegInstaller.path);
 const log = (...a) => console.log(new Date().toISOString(), ...a);
 
 // === Cognito config from env ===
-const COG_REGION = process.env.COGNITO_REGION || "ap-southeast-2";
-const COG_USER_POOL_ID = process.env.COGNITO_USER_POOL_ID || "";
+// const COG_REGION = process.env.COGNITO_REGION || "ap-southeast-2";
+const COG_USER_POOL_ID = CONFIG.COGNITO_USER_POOL_ID || "";
 const COG_CLIENT_ID = secret.COGNITO_CLIENT_ID || "";
 const COG_CLIENT_SECRET = secret.COGNITO_CLIENT_SECRET || "";
 
-const cogClient = new CognitoIdentityProviderClient({ region: COG_REGION });
+const cogClient = new CognitoIdentityProviderClient({ region: AWS_REGION });
 const hasSecret =
   typeof COG_CLIENT_SECRET === "string" && COG_CLIENT_SECRET.length > 0;
 
@@ -145,6 +164,131 @@ const THUMB_DIR = path.join(OUT_DIR, "thumbs");
 for (const d of [UP_DIR, OUT_DIR, THUMB_DIR])
   fs.mkdirSync(d, { recursive: true });
 
+// ---- admin allowlist from env ----
+const ADM_USERNAMES = (CONFIG.ADMIN_USERNAMES || "")
+  .split(",")
+  .map((s) => s.trim().toLowerCase())
+  .filter(Boolean);
+
+const ADM_EMAILS = (CONFIG.ADMIN_EMAILS || "")
+  .split(",")
+  .map((s) => s.trim().toLowerCase())
+  .filter(Boolean);
+const ADM_GROUPS = (CONFIG.ADMIN_GROUPS || "")
+  .split(",")
+  .map((s) => s.trim())
+  .filter(Boolean);
+console.log("ADM_USERNAMES:", ADM_USERNAMES);
+
+function isAdminByEnv(username) {
+  const u = (username || "").toLowerCase();
+  return ADM_USERNAMES.includes(u);
+}
+
+
+// auth middleware
+async function auth(req, res, next) {
+  try {
+    const m = (req.headers.authorization || "").match(/^Bearer (.+)$/i);
+    if (!m) return res.status(401).json({ ok: false, error: "missing token" });
+
+    const token = m[1];
+    const payload = await idTokenVerifier.verify(token);
+    const rawName = payload["cognito:username"];
+    const username = typeof rawName === "string" ? rawName.trim() : "";
+
+    // 从 token 中提取 groups
+    const groups = Array.isArray(payload["cognito:groups"])
+      ? payload["cognito:groups"]
+      : [];
+
+    // 判断是否 admin
+    // const isAdmin = groups.includes("Admin") || isAdminByEnv(payload, username);
+    const isAdmin = groups.includes("Admin") || isAdminByEnv(username);
+
+    req.user = {
+      sub: username,
+      email: payload.email || null,
+      groups,
+      jwt: token,
+      admin: isAdmin,
+    };
+
+    next();
+  } catch (e) {
+    return res
+      .status(401)
+      .json({ ok: false, error: "invalid token", detail: e.message });
+  }
+}
+
+// Multer temp
+
+const tmpDir = path.join(process.cwd(), "uploads");
+if (!fs.existsSync(tmpDir)) fs.mkdirSync(tmpDir, { recursive: true });
+const storage = multer.diskStorage({
+  destination: (_req, _file, cb) => cb(null, tmpDir),
+  filename: (_req, file, cb) => cb(null, `${nowTs()}-${file.originalname}`),
+});
+function nowTs() {
+  return Date.now();
+}
+const upload = multer({ storage });
+
+// helpers
+
+function listParams(req, opt) {
+  const page = Math.max(1, parseInt(req.query.page || "1", 10));
+  const size = Math.min(100, Math.max(1, parseInt(req.query.size || "10", 10)));
+  const q = (req.query.q || "").trim();
+  const sort = opt.sortWhitelist.includes(req.query.sort)
+    ? req.query.sort
+    : opt.defaultSort;
+  const order =
+    (req.query.order || "desc").toLowerCase() === "asc" ? "asc" : "desc";
+  const offset = (page - 1) * size;
+  return { page, size, offset, q, sort, order };
+}
+
+// ----- jobs -----
+const TRANSCODE_COST_CENTS = 50;
+
+async function createJobWithCharge(owner, fileId, cents, params) {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const upd = await client.query(
+      `UPDATE accounts
+         SET balance_cents = balance_cents - $1, updated_at = now()
+       WHERE owner=$2 AND balance_cents >= $1`,
+      [cents, owner]
+    );
+    if (upd.rowCount !== 1) throw new Error("INSUFFICIENT_FUNDS");
+
+    const jobId = uuidv4();
+    await client.query(
+      `INSERT INTO jobs
+         (id, owner, file_id, status, params, charged_cents, created_at, updated_at)
+       VALUES ($1,$2,$3,'queued',$4,$5, now(), now())`,
+      [jobId, owner, fileId, JSON.stringify(params), cents]
+    );
+    await client.query("COMMIT");
+    return jobId;
+  } catch (e) {
+    await client.query("ROLLBACK");
+    throw e;
+  } finally {
+    client.release();
+  }
+}
+
+
+
+
+
+
+
+
 // ----- app -----
 const app = express();
 app.use(cors());
@@ -176,28 +320,6 @@ app.post("/auth/signup", async (req, res) => {
       .json({ ok: false, error: e.name || "SignUpError", message: e.message });
   }
 });
-
-// ---- admin allowlist from env ----
-const ADM_USERNAMES = (process.env.ADMIN_USERNAMES || "")
-  .split(",")
-  .map((s) => s.trim().toLowerCase())
-  .filter(Boolean);
-
-const ADM_EMAILS = (process.env.ADMIN_EMAILS || "")
-  .split(",")
-  .map((s) => s.trim().toLowerCase())
-  .filter(Boolean);
-const ADM_GROUPS = (process.env.ADMIN_GROUPS || "")
-  .split(",")
-  .map((s) => s.trim())
-  .filter(Boolean);
-console.log("ADM_USERNAMES:", ADM_USERNAMES);
-
-function isAdminByEnv(username) {
-  const u = (username || "").toLowerCase();
-  return ADM_USERNAMES.includes(u);
-}
-
 
 app.post("/auth/confirm", async (req, res) => {
   const { username, code } = req.body || {};
@@ -275,69 +397,7 @@ app.get("/auth/whoami", auth, (req, res) => {
   res.json({ ok: true, user: req.user });
 });
 
-// auth middleware
-async function auth(req, res, next) {
-  try {
-    const m = (req.headers.authorization || "").match(/^Bearer (.+)$/i);
-    if (!m) return res.status(401).json({ ok: false, error: "missing token" });
 
-    const token = m[1];
-    const payload = await idTokenVerifier.verify(token);
-    const rawName = payload["cognito:username"];
-    const username = typeof rawName === "string" ? rawName.trim() : "";
-
-    // 从 token 中提取 groups
-    const groups = Array.isArray(payload["cognito:groups"])
-      ? payload["cognito:groups"]
-      : [];
-
-    // 判断是否 admin
-    // const isAdmin = groups.includes("Admin") || isAdminByEnv(payload, username);
-    const isAdmin = groups.includes("Admin") || isAdminByEnv(username);
-
-    req.user = {
-      sub: username,
-      email: payload.email || null,
-      groups,
-      jwt: token,
-      admin: isAdmin,
-    };
-
-    next();
-  } catch (e) {
-    return res
-      .status(401)
-      .json({ ok: false, error: "invalid token", detail: e.message });
-  }
-}
-
-// Multer temp
-
-const tmpDir = path.join(process.cwd(), "uploads");
-if (!fs.existsSync(tmpDir)) fs.mkdirSync(tmpDir, { recursive: true });
-const storage = multer.diskStorage({
-  destination: (_req, _file, cb) => cb(null, tmpDir),
-  filename: (_req, file, cb) => cb(null, `${nowTs()}-${file.originalname}`),
-});
-function nowTs() {
-  return Date.now();
-}
-const upload = multer({ storage });
-
-// helpers
-
-function listParams(req, opt) {
-  const page = Math.max(1, parseInt(req.query.page || "1", 10));
-  const size = Math.min(100, Math.max(1, parseInt(req.query.size || "10", 10)));
-  const q = (req.query.q || "").trim();
-  const sort = opt.sortWhitelist.includes(req.query.sort)
-    ? req.query.sort
-    : opt.defaultSort;
-  const order =
-    (req.query.order || "desc").toLowerCase() === "asc" ? "asc" : "desc";
-  const offset = (page - 1) * size;
-  return { page, size, offset, q, sort, order };
-}
 
 // ----- account -----
 app.get("/me", auth, async (req, res) => {
@@ -419,7 +479,7 @@ app.post("/upload-url", auth, async (req, res) => {
 
 app.get("/debug/aws", async (_req, res) => {
   try {
-    const sts = new STSClient({ region: process.env.AWS_REGION });
+    const sts = new STSClient({ region: AWS_REGION });
     const out = await sts.send(new GetCallerIdentityCommand({}));
     res.json({
       ok: true,
@@ -487,10 +547,13 @@ app.get("/files/:id/meta", auth, async (req, res) => {
 // ----- 简化版 OpenSubtitles subtitles meta -----
 app.post("/files/:id/subs", auth, async (req, res) => {
   if (!OPENSUBTITLES_API_KEY) {
-    return res.status(400).json({ ok: false, error: "OPENSUBTITLES_API_KEY missing" });
+    return res
+      .status(400)
+      .json({ ok: false, error: "OPENSUBTITLES_API_KEY missing" });
   }
 
-  const OS_USER_AGENT = process.env.OPENSUBTITLES_USER_AGENT || "video-api-client/1.0";
+  const OS_USER_AGENT =
+    CONFIG.OPENSUBTITLES_USER_AGENT || "video-api-client/1.0";
 
   // 确认文件存在
   const f = await one(`SELECT id FROM files WHERE id=$1 AND owner=$2`, [
@@ -500,7 +563,9 @@ app.post("/files/:id/subs", auth, async (req, res) => {
   if (!f) return res.sendStatus(404);
 
   const query = String(req.body?.query || "").trim();
-  const languages = Array.isArray(req.body?.languages) ? req.body.languages : ["en"];
+  const languages = Array.isArray(req.body?.languages)
+    ? req.body.languages
+    : ["en"];
   if (!query) {
     return res.status(400).json({ ok: false, error: "query required" });
   }
@@ -508,14 +573,16 @@ app.post("/files/:id/subs", auth, async (req, res) => {
   try {
     const url =
       `https://api.opensubtitles.com/api/v1/subtitles?` +
-      `query=${encodeURIComponent(query)}&languages=${encodeURIComponent(languages.join(","))}` +
+      `query=${encodeURIComponent(query)}&languages=${encodeURIComponent(
+        languages.join(",")
+      )}` +
       `&order_by=downloads&order_direction=desc`;
 
     const r = await fetch(url, {
       headers: {
         "Api-Key": OPENSUBTITLES_API_KEY,
         "User-Agent": OS_USER_AGENT,
-        "Accept": "application/json",
+        Accept: "application/json",
       },
     });
 
@@ -550,45 +617,12 @@ app.post("/files/:id/subs", auth, async (req, res) => {
 
     res.json({ ok: true, count: top.length, meta: payload });
   } catch (e) {
-    res.status(500).json({ ok: false, error: "SubsFetchError", message: e.message });
+    res
+      .status(500)
+      .json({ ok: false, error: "SubsFetchError", message: e.message });
   }
 });
 
-
-
-// app.delete("/files/:id", auth, async (req, res) => {
-//   const row = await one(
-//     `SELECT stored_path FROM files WHERE id=$1 AND owner=$2`,
-//     [req.params.id, req.user.sub]
-//   );
-//   if (!row) return res.sendStatus(404);
-
-//   try {
-//     // 刪除 S3 檔案
-//     await s3.send(
-//       new DeleteObjectCommand({
-//         Bucket: BUCKET,
-//         Key: row.stored_path, // 這裡就是存 DB 的 Key
-//       })
-//     );
-//   } catch (e) {
-//     log("S3 delete warn:", e.message);
-//     return res.status(500).json({ ok: false, error: "S3 delete failed" });
-//   }
-
-//   // 刪除 DB 紀錄
-//   const r = await run(`DELETE FROM files WHERE id=$1 AND owner=$2`, [
-//     req.params.id,
-//     req.user.sub,
-//   ]);
-
-//   if (r.rowCount !== 1)
-//     return res
-//       .status(500)
-//       .json({ ok: false, error: "DB record delete failed." });
-
-//   res.json({ ok: true });
-// });
 
 app.delete("/files/:id", auth, async (req, res) => {
   const fileId = req.params.id;
@@ -654,7 +688,6 @@ app.delete("/files/:id", auth, async (req, res) => {
   })().catch(() => {});
 });
 
-
 // ----- admin: list all users' files -----
 app.get("/admin/files", auth, async (req, res) => {
   if (!req.user?.admin)
@@ -716,37 +749,7 @@ app.get("/download/original/:fileId", auth, async (req, res) => {
   }
 });
 
-// ----- jobs -----
-const TRANSCODE_COST_CENTS = 50;
 
-async function createJobWithCharge(owner, fileId, cents, params) {
-  const client = await pool.connect();
-  try {
-    await client.query("BEGIN");
-    const upd = await client.query(
-      `UPDATE accounts
-         SET balance_cents = balance_cents - $1, updated_at = now()
-       WHERE owner=$2 AND balance_cents >= $1`,
-      [cents, owner]
-    );
-    if (upd.rowCount !== 1) throw new Error("INSUFFICIENT_FUNDS");
-
-    const jobId = uuidv4();
-    await client.query(
-      `INSERT INTO jobs
-         (id, owner, file_id, status, params, charged_cents, created_at, updated_at)
-       VALUES ($1,$2,$3,'queued',$4,$5, now(), now())`,
-      [jobId, owner, fileId, JSON.stringify(params), cents]
-    );
-    await client.query("COMMIT");
-    return jobId;
-  } catch (e) {
-    await client.query("ROLLBACK");
-    throw e;
-  } finally {
-    client.release();
-  }
-}
 
 app.get("/jobs", auth, async (req, res) => {
   const { page, size, offset, q, sort, order } = listParams(req, {
@@ -1088,11 +1091,9 @@ app.get("/outputs", auth, (_req, res) => {
 });
 
 // file_id TEXT, -- 注意：不再 NOT NULL
-
 const schema = process.env.PGSCHEMA || "public";
 async function ensureTables() {
   // 指定 schema========================change to the schema name
-  // await run(`SET search_path TO s237;`);
   await run(`SET search_path TO "${schema}";`);
 
   // 建立表格
@@ -1136,16 +1137,12 @@ async function ensureTables() {
 await ensureTables();
 
 // ----- start -----
-
 const HOST = process.env.IS_EC2 === "true" ? "0.0.0.0" : "localhost";
 
 app.listen(PORT, HOST, () => {
-  const displayHost = HOST === "0.0.0.0" ? process.env.EC2_PUBLIC_URL || "0.0.0.0" : "localhost";
+  const displayHost =
+    HOST === "0.0.0.0" ? process.env.EC2_PUBLIC_URL || "0.0.0.0" : "localhost";
   console.log(`Server listening on http://${displayHost}:${PORT}`);
 });
 
-
-// app.listen(PORT, "0.0.0.0",() => {
-//   log(`Server listening on http://0.0.0.0:${PORT}`);
-//   // log(`Server listening on http://localhost:${PORT}`);
-// });
+})();
