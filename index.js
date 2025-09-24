@@ -36,18 +36,37 @@ import {
   SecretsManagerClient,
   GetSecretValueCommand,
 } from "@aws-sdk/client-secrets-manager";
-import 'dotenv/config';
+import { defaultProvider } from "@aws-sdk/credential-provider-node";
+import "dotenv/config";
 
 // ----- resolve __dirname -----
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+// Utility: decide how to load credentials
+async function getCredentialsProvider() {
+  if (process.env.IS_EC2 === "true") {
+    return defaultProvider(); // 直接回傳 provider function
+  } else {
+    return fromIni({ profile: "default" });
+  }
+}
+const creds = await getCredentialsProvider();
+
+// if (!process.env.AWS_PROFILE) {
+//   throw new Error(
+//     "No AWS_PROFILE found. Please set AWS_PROFILE for local dev."
+//   );
+// }
+// return fromIni({ profile: "default" });
+// }
 
 // ---- load secret keys from the secret manager ----
 const secret_name = process.env.AWS_SECRET_NAME;
 const client = new SecretsManagerClient({
   region: process.env.AWS_REGION,
-  credentials: fromIni({ profile: "default" }),
+  credentials: creds,
+  // credentials: fromIni({ profile: "default" }),
 });
 let response;
 
@@ -63,17 +82,20 @@ try {
   // https://docs.aws.amazon.com/secretsmanager/latest/apireference/API_GetSecretValue.html
   throw error;
 }
-
 const secret = JSON.parse(response.SecretString);
+
+// === S3 ===
+const s3 = new S3Client({
+  region: process.env.AWS_REGION,
+  credentials: creds,
+});
+const BUCKET = process.env.AWS_S3_BUCKET;
 
 // export DB secret key for DB.js to access
 const pool = initializePool({
   user: secret.PGUSER,
   password: secret.PGPASSWORD,
 });
-
-// const result = await pool.query("SELECT NOW()");
-// console.log(result.rows);
 
 // ----- config -----
 const PORT = Number(process.env.PORT || 8080);
@@ -160,7 +182,7 @@ const ADM_USERNAMES = (process.env.ADMIN_USERNAMES || "")
   .split(",")
   .map((s) => s.trim().toLowerCase())
   .filter(Boolean);
-  
+
 const ADM_EMAILS = (process.env.ADMIN_EMAILS || "")
   .split(",")
   .map((s) => s.trim().toLowerCase())
@@ -171,13 +193,10 @@ const ADM_GROUPS = (process.env.ADMIN_GROUPS || "")
   .filter(Boolean);
 console.log("ADM_USERNAMES:", ADM_USERNAMES);
 
-
-
 function isAdminByEnv(username) {
   const u = (username || "").toLowerCase();
   return ADM_USERNAMES.includes(u);
 }
-
 
 // function isAdminByEnv(payload, username) {
 //   const u = (username || "").toLowerCase();
@@ -238,13 +257,11 @@ app.post("/login", async (req, res) => {
     if (!idToken) return res.status(401).json({ ok: false, error: "no token" });
   } catch (e) {
     console.error("[/login] Cognito error:", e.name, e.message);
-    return res
-      .status(401)
-      .json({
-        ok: false,
-        error: e.name || "AuthError",
-        message: e.message || "Login failed",
-      });
+    return res.status(401).json({
+      ok: false,
+      error: e.name || "AuthError",
+      message: e.message || "Login failed",
+    });
   }
 
   res.json({ ok: true, authToken: idToken });
@@ -301,18 +318,6 @@ async function auth(req, res, next) {
       .json({ ok: false, error: "invalid token", detail: e.message });
   }
 }
-
-// === S3 ===
-
-const s3 = new S3Client({
-  region: process.env.AWS_REGION,
-  credentials: fromIni({ profile: "default" }), // 指定 default SSO profile
-  // credentials: {
-  //   accessKeyId: process.env.AWS_ACCESS_KEY_ID,
-  //   secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
-  // },
-});
-const BUCKET = process.env.AWS_S3_BUCKET;
 
 // Multer temp
 
@@ -1062,6 +1067,7 @@ await ensureTables();
 
 // ----- start -----
 
-app.listen(PORT, () => {
-  log(`Server listening on http://localhost:${PORT}`);
+app.listen(PORT, "0.0.0.0",() => {
+  log(`Server listening on http://0.0.0.0:${PORT}`);
+  // log(`Server listening on http://localhost:${PORT}`);
 });

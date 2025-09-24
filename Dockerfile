@@ -10,9 +10,10 @@ WORKDIR /app
 
 COPY package*.json ./
 RUN npm ci --omit=dev
+COPY . .
 
-COPY index.js ./
-COPY public ./public
+# COPY index.js ./
+# COPY public ./public
 
 RUN mkdir -p /app/data/uploads /app/data/outputs /app/data/subtitles
 
