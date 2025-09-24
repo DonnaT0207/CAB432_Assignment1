@@ -469,525 +469,485 @@
   <div class="toasts" id="toasts"></div>
 
   <script>
-    // --- state & utils ---
-    const BASE = location.origin;
-    let token = null, jobsInterval = null;
-    let filesPage = 1, jobsPage = 1, adminFilesPage = 1;
-    let isAdmin = false;
+  // --- state & utils ---
+  const BASE = location.origin;
+  let token = null, jobsInterval = null;
+  let filesPage = 1, jobsPage = 1, adminFilesPage = 1;
+  let isAdmin = false;
 
+  const $ = (q) => document.querySelector(q);
+  function toast(msg, type = "success", t = 2500) {
+    const w = $("#toasts"); const d = document.createElement("div");
+    d.className = `toast ${type}`; d.textContent = msg; w.appendChild(d); setTimeout(() => d.remove(), t);
+  }
+  function setAuthPill(text, kind) {
+    const p = $("#authState"); p.className = `pill ${kind}`;
+    p.innerHTML = `${kind === 'warn' ? '<span class="spinner"></span> ' : ''}${text}`;
+  }
+  function escapeHtml(s) { return (s == null) ? '' : String(s).replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;').replaceAll("'","&#39;"); }
+  function setBalance(cents) { $("#bal").textContent = (Number(cents || 0) / 100).toFixed(2); }
+  function debounce(fn, delay = 300) { let t; return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), delay); }; }
+  function authHeaders() { return token ? { Authorization: 'Bearer ' + token } : {}; }
+  async function guardFetch(url, opts = {}) {
+    const r = await fetch(url, { ...opts, headers: { ...(opts.headers || {}), ...authHeaders() } });
+    if (r.status === 401) {
+      // 立刻回到未登录 UI，隐藏 3A
+      token = null;
+      localStorage.removeItem("idToken");
+      toggleUI(false);
+      toast('Unauthorized', 'error');
+      throw new Error('Unauthorized');
+    }
+    return r;
+  }
 
-    const $ = (q) => document.querySelector(q);
-    function toast(msg, type = "success", t = 2500) {
-      const w = $("#toasts"); const d = document.createElement("div");
-      d.className = `toast ${type}`; d.textContent = msg; w.appendChild(d); setTimeout(() => d.remove(), t)
+  // 只负责根据 isAdmin 显示/禁用 3A 控件
+  function applyAdminUI() {
+    if (isAdmin) {
+      $("#adminSection").style.display = 'block';
+      ["adminFilesQ","adminFilesSort","adminFilesOrder","adminFilesSize","btnAdminList"].forEach(id => { const el = document.getElementById(id); if (el) el.disabled = false; });
+    } else {
+      $("#adminSection").style.display = 'none';
+      ["adminFilesQ","adminFilesSort","adminFilesOrder","adminFilesSize","btnAdminList"].forEach(id => { const el = document.getElementById(id); if (el) el.disabled = true; });
+      $("#adminFiles").innerHTML = '';
     }
-    function setAuthPill(text, kind) {
-      const p = $("#authState"); p.className = `pill ${kind}`;
-      p.innerHTML = `${kind === 'warn' ? '<span class="spinner"></span> ' : ''}${text}`
-    }
-    function toggleUI(on) {
-      $("#file").disabled = !on; $("#btnUpload").disabled = !on; $("#btnList").disabled = !on;
-      $("#btnJobs").disabled = !on; $("#btnLogout").disabled = !on; $("#btnLogin").disabled = on; $("#btnTopup").disabled = !on;
-      $("#autoJobs").disabled = !on;["filesQ", "filesSort", "filesOrder", "filesSize", "jobStatus", "jobsSort", "jobsOrder", "jobsSize"].forEach(id => { $("#" + id).disabled = !on });
-      $("#tok").textContent = on ? (token.slice(0, 24) + '...') : '-';
-      if (!on) {
-        setAuthPill('Not logged in', 'warn'); $("#files").innerHTML = ''; $("#jobs").innerHTML = ''; clearInterval(jobsInterval); setBalance(0)
-      } else {
-        setAuthPill('Logged in', 'success'); refreshMe(); listFiles(); listJobs();
-        jobsInterval = setInterval(() => token && listJobs(), 5000)
-      }
-    }
-    function authHeaders() { return token ? { Authorization: 'Bearer ' + token } : {} }
-    async function guardFetch(url, opts = {}) {
-      const r = await fetch(url, { ...opts, headers: { ...(opts.headers || {}), ...authHeaders() } });
-      if (r.status === 401) { token = null; localStorage.removeItem("idToken"); toggleUI(false); toast('Unauthorized', 'error'); throw new Error('Unauthorized') } return r
-    }
-    function escapeHtml(s) { return (s == null) ? '' : String(s).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;').replaceAll("'", '&#39;') }
-    function setBalance(cents) { $("#bal").textContent = (Number(cents || 0) / 100).toFixed(2); }
-    function debounce(fn, delay = 300) { let t; return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), delay); }; }
+  }
 
-    // --- signup / confirm ---
-    async function signupFlow() {
-      const username = $("#u").value.trim(), password = $("#p").value;
-      const email = prompt("Enter your email for sign-up:");
-      if (!username || !password || !email) { toast('username/password/email required', 'error'); return; }
-      const r = await fetch(BASE + '/auth/signup', {
-        method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ username, password, email })
+  // 统一的 UI 开关（不直接决定 3A，3A 由 refreshMe 决定）
+  function toggleUI(on) {
+    $("#file").disabled = !on; $("#btnUpload").disabled = !on; $("#btnList").disabled = !on;
+    $("#btnJobs").disabled = !on; $("#btnLogout").disabled = !on; $("#btnLogin").disabled = on; $("#btnTopup").disabled = !on;
+    $("#autoJobs").disabled = !on;
+    ["filesQ","filesSort","filesOrder","filesSize","jobStatus","jobsSort","jobsOrder","jobsSize"].forEach(id => { const el = $("#" + id); if (el) el.disabled = !on; });
+    $("#tok").textContent = on && token ? (token.slice(0, 24) + '...') : '-';
+
+    if (!on) {
+      setAuthPill('Not logged in', 'warn');
+      $("#files").innerHTML = '';
+      $("#jobs").innerHTML = '';
+      clearInterval(jobsInterval);
+      jobsInterval = null;
+      setBalance(0);
+
+      // 立刻隐藏 3A，避免权限残留
+      isAdmin = false;
+      applyAdminUI();
+      return;
+    }
+
+    setAuthPill('Logged in', 'success');
+  }
+
+  // 读取余额 & 权限，并据此更新 3A（切换账号时即时生效）
+  async function refreshMe() {
+    const r = await guardFetch(BASE + '/me');
+    const j = await r.json().catch(() => null);
+    setBalance(j?.balance_cents || 0);
+
+    const before = isAdmin;
+    isAdmin = !!j?.admin;
+
+    // 只有变化时才切换 UI（避免闪烁）
+    if (isAdmin !== before) applyAdminUI();
+
+    if (isAdmin) {
+      adminFilesPage = 1;
+      await listAdminFiles();
+    }
+  }
+
+  // --- signup / confirm ---
+  async function signupFlow() {
+    const username = $("#u").value.trim(), password = $("#p").value;
+    const email = prompt("Enter your email for sign-up:");
+    if (!username || !password || !email) { toast('username/password/email required', 'error'); return; }
+    const r = await fetch(BASE + '/auth/signup', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ username, password, email })
+    });
+    const j = await r.json().catch(() => null);
+    if (r.ok && (j?.ok !== false)) toast('Sign up sent. Check your inbox (Spam).');
+    else toast(`Sign up failed: ${j?.error || j?.message || r.status}`, 'error');
+  }
+  async function confirmFlow() {
+    const username = $("#u").value.trim();
+    const code = prompt("Enter the 6-digit confirmation code:");
+    if (!username || !code) { toast('username/code required', 'error'); return; }
+    const r = await fetch(BASE + '/auth/confirm', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ username, code })
+    });
+    const j = await r.json().catch(() => null);
+    if (r.ok && (j?.ok !== false)) toast('Email confirmed! You can login now.');
+    else toast(`Confirm failed: ${j?.error || j?.message || r.status}`, 'error');
+  }
+  $("#link-signup")?.addEventListener("click", signupFlow);
+  $("#link-confirm")?.addEventListener("click", confirmFlow);
+
+  // --- login/logout (唯一版本) ---
+  $("#btnLogin").onclick = async () => {
+    const r = await fetch(BASE + '/login', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ username: $("#u").value, password: $("#p").value })
+    });
+    const j = await r.json().catch(() => null);
+    if (!r.ok || !j?.authToken) { toast(`Login failed${j?.error ? `: ${j.error}` : ''}`, 'error'); return; }
+
+    token = j.authToken;
+    localStorage.setItem("idToken", token);
+
+    // 先切到已登录 UI（隐藏 3A，稍后 refreshMe 再决定是否显示 3A）
+    toggleUI(true);
+
+    // 立刻刷新权限 & 余额（决定 3A 是否显示）
+    await refreshMe();
+
+    // 再加载数据并开启轮询
+    listFiles();
+    listJobs();
+    if (!jobsInterval) jobsInterval = setInterval(() => token && listJobs(), 5000);
+
+    toast('Login successful');
+  };
+
+  $("#btnLogout").onclick = () => {
+    token = null;
+    localStorage.removeItem("idToken");
+    toggleUI(false);
+    toast('Logged out');
+  };
+
+  // --- Top up (唯一版本) ---
+  $("#btnTopup").onclick = async () => {
+    if (!token) { toast('Please login first', 'error'); return; }
+    const cents = parseInt($("#topupAmt").value, 10);
+    if (!Number.isInteger(cents) || cents <= 0) { toast('Invalid amount', 'error'); return; }
+    const r = await guardFetch(BASE + '/accounts/topup', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ amount_cents: cents })
+    });
+    const j = await r.json().catch(() => null);
+    if (r.ok && (j?.ok !== false)) { toast(`Topped up $${(cents / 100).toFixed(2)}`); await refreshMe(); }
+    else toast(`Top up failed: ${j?.error || j?.message || r.status}`, 'error');
+  };
+
+  // --- upload ---
+  async function uploadFileWithRetry(file, maxRetries = 3) {
+    const btn = $("#btnUpload");
+    const oldText = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = "Uploading…";
+    try {
+      const r = await guardFetch(BASE + '/upload-url', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ filename: file.name, mimeType: file.type, size: file.size })
       });
-      const j = await r.json().catch(() => null);
-      if (r.ok && (j?.ok !== false)) { toast('Sign up sent. Check your inbox (Spam).'); }
-      else { toast(`Sign up failed: ${j?.error || j?.message || r.status}`, 'error'); }
-    }
-    async function confirmFlow() {
-      const username = $("#u").value.trim();
-      const code = prompt("Enter the 6-digit confirmation code:");
-      if (!username || !code) { toast('username/code required', 'error'); return; }
-      const r = await fetch(BASE + '/auth/confirm', {
-        method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ username, code })
-      });
-      const j = await r.json().catch(() => null);
-      if (r.ok && (j?.ok !== false)) { toast('Email confirmed! You can login now.'); }
-      else { toast(`Confirm failed: ${j?.error || j?.message || r.status}`, 'error'); }
-    }
-    $("#link-signup")?.addEventListener("click", signupFlow);
-    $("#link-confirm")?.addEventListener("click", confirmFlow);
+      const j = await r.json();
+      if (!j.ok) throw new Error('Failed to get upload URL');
 
-    // --- login/logout ---
-    $("#btnLogin").onclick = async () => {
-      const r = await fetch(BASE + '/login', {
-        method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ username: $("#u").value, password: $("#p").value })
-      });
-      const j = await r.json().catch(() => null);
-      if (!r.ok || !j?.authToken) { toast(`Login failed${j?.error ? `: ${j.error}` : ''}`, 'error'); return; }
-      token = j.authToken;
-      localStorage.setItem("idToken", token);
-
-      await checkAdminStatus();      // 先检测管理员身份（/auth/whoami）
-      toggleUI(true);                // 打开 UI
-      toast('Login successful');
-    };
-
-    $("#btnLogout").onclick = () => {
-      token = null; localStorage.removeItem("idToken"); toggleUI(false); toast('Logged out')
-    };
-
-    // $("#btnTopup").onclick = async () => {
-    //   const amt = parseInt($("#topupAmt").value, 10);
-    //   if (!Number.isInteger(amt) || amt <= 0) { toast('Enter cents, e.g. 200', 'error'); return; }
-    //   const r = await guardFetch(BASE + '/accounts/topup', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ amount_cents: amt }) });
-    //   if (!r.ok) { toast('Top up failed', 'error'); return; }
-    //   toast('Top up success'); refreshMe();
-    // };
-
-    async function checkAdminStatus() {
-      try {
-        const r = await guardFetch(BASE + '/auth/whoami');
-        if (r.ok) {
-          const j = await r.json();
-          isAdmin = !!(j.user && j.user.admin);
-        } else {
-          isAdmin = false;
+      const { uploadUrl, fileId, s3Key } = j;
+      for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        try {
+          const upRes = await fetch(uploadUrl, { method: 'PUT', headers: { 'Content-Type': file.type }, body: file });
+          if (!upRes.ok) throw new Error(`S3 upload failed with status ${upRes.status}`);
+          $("#upRes").textContent = JSON.stringify({ fileId, s3Key, ok: true }, null, 2);
+          toast('Upload successful');
+          filesPage = 1;
+          listFiles();
+          return;
+        } catch (err) {
+          if (attempt === maxRetries) throw err;
+          await new Promise(r => setTimeout(r, 1000 * attempt));
         }
-      } catch (e) {
-        console.error('Failed to check admin status:', e);
-        isAdmin = false;
       }
+    } catch (err) {
+      console.error('Upload failed:', err);
+      toast('Upload failed', 'error');
+    } finally {
+      btn.disabled = false;
+      btn.textContent = oldText;
     }
+  }
 
-    // --- UI on/off （根据 isAdmin 控制 3A 的显示/可用性）---
-    function toggleUI(on) {
-      $("#file").disabled = !on; $("#btnUpload").disabled = !on; $("#btnList").disabled = !on;
-      $("#btnJobs").disabled = !on; $("#btnLogout").disabled = !on; $("#btnLogin").disabled = on; $("#btnTopup").disabled = !on;
-      $("#autoJobs").disabled = !on;["filesQ", "filesSort", "filesOrder", "filesSize", "jobStatus", "jobsSort", "jobsOrder", "jobsSize"].forEach(id => { $("#" + id).disabled = !on });
-      $("#tok").textContent = on ? (token.slice(0, 24) + '...') : '-';
+  $("#btnUpload").onclick = async () => {
+    const f = $("#file").files[0];
+    if (!f) return toast('Choose a video file first', 'error');
+    await uploadFileWithRetry(f, 3);
+  };
 
-      // 管理员区显示/隐藏与控件状态
-      if (isAdmin && on) {
-        $("#adminSection").style.display = 'block';
-        $("#btnAdminList").disabled = !on;
-        ["adminFilesQ", "adminFilesSort", "adminFilesOrder", "adminFilesSize"].forEach(id => { $("#" + id).disabled = !on });
-      } else {
-        $("#adminSection").style.display = 'none';
-        $("#btnAdminList").disabled = true;
-        ["adminFilesQ", "adminFilesSort", "adminFilesOrder", "adminFilesSize"].forEach(id => { $("#" + id).disabled = true });
-      }
+  // --- files ---
+  $("#btnList").onclick = () => { filesPage = 1; listFiles(); };
+  $("#filesPrev").onclick = () => { if (filesPage > 1) { filesPage--; listFiles(); } };
+  $("#filesNext").onclick = () => { filesPage++; listFiles(); };
+  $("#filesQ").oninput = debounce(() => { filesPage = 1; listFiles(); }, 300);
+  $("#filesSort").onchange = () => { filesPage = 1; listFiles(); };
+  $("#filesOrder").onchange = () => { filesPage = 1; listFiles(); };
+  $("#filesSize").onchange = () => { filesPage = 1; listFiles(); };
 
-      if (!on) {
-        setAuthPill('Not logged in', 'warn');
-        $("#files").innerHTML = ''; $("#jobs").innerHTML = ''; $("#adminFiles").innerHTML = '';
-        clearInterval(jobsInterval); setBalance(0);
-      } else {
-        setAuthPill('Logged in', 'success');
-        refreshMe();               // 拉取余额与（再次）确认 admin，并按需加载 3A 列表
-        listFiles(); listJobs();
-        jobsInterval = setInterval(() => token && listJobs(), 5000)
-      }
-    }
+  async function listFiles() {
+    const q = encodeURIComponent($("#filesQ").value || "");
+    const sort = $("#filesSort").value;
+    const order = $("#filesOrder").value;
+    const size = parseInt($("#filesSize").value, 10) || 10;
 
-    // --- 余额/身份信息（不会再调用 toggleUI，避免循环）---
+    const r = await guardFetch(`${BASE}/files?page=${filesPage}&size=${size}&q=${q}&sort=${sort}&order=${order}`);
+    const j = await r.json().catch(() => null);
 
-    async function refreshMe() {
-      const r = await guardFetch(BASE + '/me');
-      const j = await r.json().catch(() => null);
-      setBalance(j?.balance_cents || 0);
-
-      // 以 /me 返回为准更新 isAdmin 并更新 3A 区显示
-      isAdmin = !!j?.admin;
-      const adminSec = document.getElementById("adminSection");
-      if (adminSec) {
-        if (isAdmin) {
-          adminSec.style.display = 'block';
-          ["adminFilesQ", "adminFilesSort", "adminFilesOrder", "adminFilesSize", "btnAdminList"].forEach(id => { const el = document.getElementById(id); if (el) el.disabled = false; });
-          adminFilesPage = 1; listAdminFiles(); // 初次加载
-        } else {
-          adminSec.style.display = 'none';
-          ["adminFilesQ", "adminFilesSort", "adminFilesOrder", "adminFilesSize", "btnAdminList"].forEach(id => { const el = document.getElementById(id); if (el) el.disabled = true; });
-          $("#adminFiles").innerHTML = '';
-        }
-      }
-    }
-    // --- login/logout ---
-    $("#btnLogin").onclick = async () => {
-      const r = await fetch(BASE + '/login', {
-        method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ username: $("#u").value, password: $("#p").value })
-      });
-      const j = await r.json().catch(() => null);
-      if (!r.ok || !j?.authToken) { toast(`Login failed${j?.error ? `: ${j.error}` : ''}`, 'error'); return; }
-      token = j.authToken;
-      localStorage.setItem("idToken", token);
-      toggleUI(true);
-      toast('Login successful');
-    };
-    $("#btnLogout").onclick = () => {
-      token = null; localStorage.removeItem("idToken"); toggleUI(false); toast('Logged out')
-    };
-    $("#btnTopup").onclick = async () => {
-      const amt = parseInt($("#topupAmt").value, 10);
-      if (!Number.isInteger(amt) || amt <= 0) { toast('Enter cents, e.g. 200', 'error'); return; }
-      const r = await guardFetch(BASE + '/accounts/topup', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ amount_cents: amt }) });
-      if (!r.ok) { toast('Top up failed', 'error'); return; }
-      toast('Top up success'); refreshMe();
-    };
-    async function refreshMe() {
-      const r = await guardFetch(BASE + '/me'); const j = await r.json().catch(() => null);
-      setBalance(j?.balance_cents || 0);
-    }
-
-    // --- upload ---
-    async function uploadFileWithRetry(file, maxRetries = 3) {
-      console.log(file.name);
-      const btn = $("#btnUpload");
-      const oldText = btn.textContent;
-      btn.disabled = true;
-      btn.textContent = "Uploading…";
-      try {
-        // 向後端請求 presigned URL
-        const r = await guardFetch(BASE + '/upload-url', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ filename: file.name, mimeType: file.type, size: file.size })
-        });
-        const j = await r.json();
-        if (!j.ok) throw new Error('Failed to get upload URL');
-        // console.log("Received presigned URL:", j.uploadUrl);
-        console.log("Received presigned URL.");
-
-        const { uploadUrl, fileId, s3Key } = j;
-
-        // 2️ 上傳檔案到 S3
-        for (let attempt = 1; attempt <= maxRetries; attempt++) {
-          try {
-            const upRes = await fetch(uploadUrl, {
-              method: 'PUT',
-              headers: { 'Content-Type': file.type },
-              body: file
-            });
-
-            if (!upRes.ok) throw new Error(`S3 upload failed with status ${upRes.status}`);
-            // 成功
-            $("#upRes").textContent = JSON.stringify({ fileId, s3Key, ok: true }, null, 2);
-            toast('Upload successful');
-            filesPage = 1;
-            listFiles();
-            return;
-          } catch (err) {
-            console.warn(`Upload attempt ${attempt} failed:`, err);
-            if (attempt === maxRetries) throw err;
-            await new Promise(r => setTimeout(r, 1000 * attempt)); // 指數退避
-          }
-        }
-      } catch (err) {
-        console.error('Upload failed:', err);
-        toast('Upload failed', 'error');
-      } finally {
-        btn.disabled = false;
-        btn.textContent = oldText;
-      }
-
-    }
-
-    // 監聽按鈕
-    $("#btnUpload").onclick = async () => {
-      const f = $("#file").files[0];
-      if (!f) return toast('Choose a video file first', 'error');
-      await uploadFileWithRetry(f, 3);
-    };
-
-
-
-    // $("#btnUpload").onclick = async ()=>{
-    //   const f=$("#file").files[0]; if(!f) return toast('Choose a video file first','error');
-    //   const fd=new FormData(); fd.append('file',f);
-    //   const r=await guardFetch(BASE+'/upload',{method:'POST',body:fd}); const j=await r.json().catch(()=>null);
-    //   $("#upRes").textContent=JSON.stringify(j,null,2);
-    //   if(j&&j.ok){toast('Upload successful'); filesPage=1; listFiles();} else toast('Upload failed','error');
-    // };
-
-    // --- files ---
-    $("#btnList").onclick = () => { filesPage = 1; listFiles(); };
-    $("#filesPrev").onclick = () => { if (filesPage > 1) { filesPage--; listFiles(); } };
-    $("#filesNext").onclick = () => { filesPage++; listFiles(); };
-
-    $("#filesQ").oninput = debounce(() => { filesPage = 1; listFiles(); }, 300);
-    $("#filesSort").onchange = () => { filesPage = 1; listFiles(); };
-    $("#filesOrder").onchange = () => { filesPage = 1; listFiles(); };
-    $("#filesSize").onchange = () => { filesPage = 1; listFiles(); };
-
-    async function listFiles() {
-      const q = encodeURIComponent($("#filesQ").value || "");
-      const sort = $("#filesSort").value;
-      const order = $("#filesOrder").value;
-      const size = parseInt($("#filesSize").value, 10) || 10;
-
-      const r = await guardFetch(`${BASE}/files?page=${filesPage}&size=${size}&q=${q}&sort=${sort}&order=${order}`);
-      const j = await r.json().catch(() => null);
-
-      const total = j?.total || 0;
-      const box = $("#files"); box.innerHTML = ''; const items = j && j.items ? j.items : [];
-      if (!items.length) { box.innerHTML = '<div class="empty">No files yet.</div>'; return; }
-      items.forEach(it => {
-        const el = document.createElement('div'); el.className = 'item';
-        el.innerHTML = `
-      <div class="item-head">
-        <div class="item-title">${escapeHtml(it.filename)}</div>
-        <div class="actions">
-          <select class="format" id="fmt-${it.id}">
-            <option value="mp4">MP4</option>
-            <option value="webm">WEBM</option>
-          </select>
-          <button class="btn primary btnTrans" data-id="${it.id}">Transcode 720p</button>
-          <button class="btn secondary btnDownOrig" data-id="${it.id}">Download original</button>
-          <button class="btn secondary btnSubs" data-id="${it.id}">Subs</button>
-          <button class="btn secondary btnMeta" data-id="${it.id}">Meta</button>
-          <button class="btn secondary btnDel" data-id="${it.id}">Delete</button>
+    const total = j?.total || 0;
+    const box = $("#files"); box.innerHTML = ''; const items = j && j.items ? j.items : [];
+    if (!items.length) { box.innerHTML = '<div class="empty">No files yet.</div>'; return; }
+    items.forEach(it => {
+      const el = document.createElement('div'); el.className = 'item';
+      el.innerHTML = `
+        <div class="item-head">
+          <div class="item-title">${escapeHtml(it.filename)}</div>
+          <div class="actions">
+            <select class="format" id="fmt-${it.id}">
+              <option value="mp4">MP4</option>
+              <option value="webm">WEBM</option>
+            </select>
+            <button class="btn primary btnTrans" data-id="${it.id}">Transcode 720p</button>
+            <button class="btn secondary btnDownOrig" data-id="${it.id}">Download original</button>
+            <button class="btn secondary btnSubs" data-id="${it.id}">Subs</button>
+            <button class="btn secondary btnMeta" data-id="${it.id}">Meta</button>
+            <button class="btn secondary btnDel" data-id="${it.id}">Delete</button>
+          </div>
         </div>
-      </div>
-      <div class="small muted">
-        id: <code>${escapeHtml(it.id)}</code>
-        <span class="sep">•</span> ${Number(it.size_bytes || 0)} bytes
-        <span class="sep">•</span> uploaded: ${escapeHtml(it.uploaded_at || '-')}
-      </div>`;
+        <div class="small muted">
+          id: <code>${escapeHtml(it.id)}</code>
+          <span class="sep">•</span> ${Number(it.size_bytes || 0)} bytes
+          <span class="sep">•</span> uploaded: ${escapeHtml(it.uploaded_at || '-')}
+        </div>`;
+      box.appendChild(el);
+    });
+    box.querySelectorAll('.btnTrans').forEach(b => b.onclick = () => transcode(b.dataset.id));
+    box.querySelectorAll('.btnDownOrig').forEach(b => b.onclick = downloadOriginal);
+    box.querySelectorAll('.btnDel').forEach(b => b.onclick = async () => {
+      if (!confirm('Delete this file?')) return;
+      await guardFetch(BASE + '/files/' + encodeURIComponent(b.dataset.id), { method: 'DELETE' });
+      listFiles(); listJobs();
+    });
+    box.querySelectorAll('.btnSubs').forEach(b => b.onclick = subsFetch);
+    box.querySelectorAll('.btnMeta').forEach(b => b.onclick = showMeta);
+
+    $("#filesPage").textContent = String(j?.page || filesPage);
+    $("#filesTotal").textContent = `Total: ${total}`;
+    const maxPage = Math.max(1, Math.ceil(total / size));
+    $("#filesPrev").disabled = (filesPage <= 1);
+    $("#filesNext").disabled = (filesPage >= maxPage);
+  }
+
+  async function downloadOriginal(e) {
+    const id = e.currentTarget.dataset.id;
+    const r = await guardFetch(BASE + '/download/original/' + encodeURIComponent(id));
+    if (!r.ok) { toast('Download failed', 'error'); return; }
+    const data = await r.json();
+    const url = data.downloadUrl;
+    const a = document.createElement('a'); a.href = url; a.download = '';
+    document.body.appendChild(a); a.click(); a.remove();
+  }
+
+  // --- Subs / Meta ---
+  async function subsFetch(e) {
+    const id = e.currentTarget.dataset.id;
+    const card = e.currentTarget.closest('.item');
+    const titleEl = card?.querySelector('.item-title');
+    const fallback = (titleEl?.textContent || '').replace(/\.[a-z0-9]+$/i, '').trim();
+    const query = prompt('Search subtitles (title/keywords):', fallback);
+    if (!query) return;
+
+    const r = await guardFetch(`${BASE}/files/${encodeURIComponent(id)}/subs`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ query, languages: ['en','zh','zh-CN','zh-TW'] })
+    });
+    if (!r.ok) {
+      let msg = 'OpenSubtitles fetch failed';
+      try { const j = await r.json(); if (j?.error) msg += `: ${j.error}` } catch {}
+      toast(msg, 'error'); return;
+    }
+    toast('Subtitles metadata saved (see Meta)');
+  }
+
+  async function showMeta(e) {
+    const id = e.currentTarget.dataset.id;
+    const r = await guardFetch(`${BASE}/files/${encodeURIComponent(id)}/meta`);
+    if (!r.ok) { toast('Failed to load metadata', 'error'); return; }
+    const j = await r.json().catch(() => null);
+    const meta = j?.meta || null;
+    const w = window.open('', '_blank', 'width=800,height=600');
+    w.document.write('<pre style="font-family:ui-monospace,Menlo,Consolas,monospace;white-space:pre-wrap;">' + (escapeHtml(JSON.stringify(meta, null, 2)) || '(empty)') + '</pre>');
+  }
+
+  // --- jobs ---
+  $("#btnJobs").onclick = () => { jobsPage = 1; listJobs(); };
+  $("#jobsPrev").onclick = () => { if (jobsPage > 1) { jobsPage--; listJobs(); } };
+  $("#jobsNext").onclick = () => { jobsPage++; listJobs(); };
+  $("#jobStatus").onchange = () => { jobsPage = 1; listJobs(); };
+  $("#jobsSort").onchange = () => { jobsPage = 1; listJobs(); };
+  $("#jobsOrder").onchange = () => { jobsPage = 1; listJobs(); };
+  $("#jobsSize").onchange = () => { jobsPage = 1; listJobs(); };
+
+  async function transcode(fileId) {
+    const fmtEl = document.getElementById('fmt-' + fileId);
+    const format = fmtEl ? fmtEl.value : 'mp4';
+    const r = await guardFetch(BASE + '/transcode/' + encodeURIComponent(fileId), {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ preset: 'slow', crf: 22, scale: '1280:720', format })
+    });
+    if (r.status === 402) { toast('Insufficient funds. Please top up.', 'error'); return; }
+    const j = await r.json().catch(() => null);
+    if (!r.ok || !j?.ok) { toast('Transcode failed', 'error'); return; }
+    toast(`Transcode started → ${format}`);
+    await refreshMe();
+    listJobs();
+  }
+
+  async function listJobs() {
+    const status = $("#jobStatus").value;
+    const sort = $("#jobsSort").value;
+    const order = $("#jobsOrder").value;
+    const size = parseInt($("#jobsSize").value, 10) || 10;
+
+    const r = await guardFetch(`${BASE}/jobs?page=${jobsPage}&size=${size}&sort=${sort}&order=${order}${status ? `&status=${status}` : ''}`);
+    const j = await r.json().catch(() => null);
+
+    const total = j?.total || 0;
+    const box = $("#jobs"); box.innerHTML = ''; const items = j && j.items ? j.items : [];
+    if (!items.length) { box.innerHTML = '<div class="empty">No jobs yet.</div>'; return; }
+    items.forEach(job => {
+      const status = String(job.status || '').toLowerCase();
+      const kind = status === 'completed' ? 'success' : status === 'failed' ? 'danger' : 'warn';
+      const row = document.createElement('div'); row.className = 'item';
+      row.innerHTML = `
+        <div class="item-head">
+          <div class="item-title">Job <code>${escapeHtml(job.id)}</code></div>
+          <div class="actions">
+            <span class="pill ${kind}">${status === 'running' ? '<span class="spinner"></span> ' : ''}${escapeHtml(status)}</span>
+            ${status === 'completed' ? `<button class="btn success btnDownTc" data-id="${job.id}">Download output</button>` : ''}
+            ${status === 'completed' && job.has_thumbnail ? `<button class="btn secondary btnThumb" data-id="${job.id}">Thumbnail</button>` : ''}
+            <button class="btn secondary btnLogs" data-id="${job.id}">Logs</button>
+          </div>
+        </div>
+        <div class="small muted">
+          progress: ${(job.progress ?? 0).toFixed(0)}%
+          <span class="sep">•</span> updated: ${escapeHtml(job.updated_at || '-')}
+          <span class="sep">•</span> charged/refunded: ${(job.charged_cents / 100).toFixed(2)} / ${(job.refunded_cents / 100).toFixed(2)}
+        </div>`;
+      box.appendChild(row);
+    });
+    box.querySelectorAll('.btnDownTc').forEach(b => b.onclick = downloadOutput);
+    box.querySelectorAll('.btnLogs').forEach(b => b.onclick = showLogs);
+    box.querySelectorAll('.btnThumb').forEach(b => b.onclick = showThumb);
+
+    $("#jobsPage").textContent = String(j?.page || jobsPage);
+    $("#jobsTotal").textContent = `Total: ${total}`;
+    const maxPage = Math.max(1, Math.ceil(total / size));
+    $("#jobsPrev").disabled = (jobsPage <= 1);
+    $("#jobsNext").disabled = (jobsPage >= maxPage);
+  }
+
+  async function showLogs(e) {
+    const jobId = e.currentTarget.dataset.id;
+    const r = await guardFetch(BASE + '/jobs/' + encodeURIComponent(jobId) + '/logs');
+    const text = await r.text();
+    const w = window.open('', '_blank', 'width=800,height=600');
+    w.document.write('<pre style="font-family:ui-monospace,Menlo,Consolas,monospace;white-space:pre-wrap;">' + (escapeHtml(text) || '(empty)') + '</pre>');
+  }
+  async function showThumb(e) {
+    const jobId = e.currentTarget.dataset.id;
+    window.open(`${BASE}/jobs/${encodeURIComponent(jobId)}/thumbnail`, '_blank', 'width=800,height=600');
+  }
+  async function downloadOutput(e) {
+    const jobId = e.currentTarget.dataset.id;
+    const r = await guardFetch(BASE + '/download/transcoded/' + encodeURIComponent(jobId));
+    if (r.status === 409) { toast('Output not ready yet', 'error'); return; }
+    if (!r.ok) { toast('Download failed', 'error'); return; }
+    const data = await r.json();
+    const url = data.downloadUrl;
+    const a = document.createElement('a'); a.href = url; a.download = '';
+    document.body.appendChild(a); a.click(); a.remove();
+  }
+
+  // --- Admin files (3A) ---
+  $("#btnAdminList").onclick = () => { adminFilesPage = 1; listAdminFiles(); };
+  $("#adminFilesPrev").onclick = () => { if (adminFilesPage > 1) { adminFilesPage--; listAdminFiles(); } };
+  $("#adminFilesNext").onclick = () => { adminFilesPage++; listAdminFiles(); };
+  $("#adminFilesQ").oninput = debounce(() => { adminFilesPage = 1; listAdminFiles(); }, 300);
+  $("#adminFilesSort").onchange = () => { adminFilesPage = 1; listAdminFiles(); };
+  $("#adminFilesOrder").onchange = () => { adminFilesPage = 1; listAdminFiles(); };
+  $("#adminFilesSize").onchange = () => { adminFilesPage = 1; listAdminFiles(); };
+
+  async function listAdminFiles() {
+    if (!isAdmin) return; // 保险
+    const q = encodeURIComponent($("#adminFilesQ").value || "");
+    const sort = $("#adminFilesSort").value;
+    const order = $("#adminFilesOrder").value;
+    const size = parseInt($("#adminFilesSize").value, 10) || 10;
+
+    const r = await guardFetch(
+      `${BASE}/admin/files?page=${adminFilesPage}&size=${size}&sort=${sort}&order=${order}${q ? `&q=${q}` : ""}`
+    );
+    if (!r.ok) { toast('Failed to load admin files', 'error'); return; }
+    const j = await r.json().catch(() => null);
+
+    const total = j?.total || 0;
+    const items = j?.items || [];
+    const box = $("#adminFiles");
+    box.innerHTML = '';
+
+    if (!items.length) {
+      box.innerHTML = '<div class="empty">No files found.</div>';
+    } else {
+      items.forEach(it => {
+        const groupsArr = Array.isArray(it.owner_groups)
+          ? it.owner_groups
+          : (typeof it.owner_groups === 'string' && it.owner_groups ? [it.owner_groups] : []);
+        const groupsLabel = groupsArr.length ? groupsArr.join(', ') : '—';
+
+        const el = document.createElement('div');
+        el.className = 'item';
+        el.innerHTML = `
+          <div class="item-head">
+            <div class="item-title">${escapeHtml(it.filename)}</div>
+            <div class="actions">
+              <span class="pill"><b>Owner:</b>&nbsp;${escapeHtml(it.owner)}</span>
+              <span class="pill"><b>Groups:</b>&nbsp;${escapeHtml(groupsLabel)}</span>
+            </div>
+          </div>
+          <div class="small muted">
+            id: <code>${escapeHtml(it.id)}</code>
+            <span class="sep">•</span> ${Number(it.size_bytes || 0)} bytes
+            <span class="sep">•</span> uploaded: ${escapeHtml(it.uploaded_at || '-')}
+          </div>`;
         box.appendChild(el);
       });
-      box.querySelectorAll('.btnTrans').forEach(b => b.onclick = () => transcode(b.dataset.id));
-      box.querySelectorAll('.btnDownOrig').forEach(b => b.onclick = downloadOriginal);
-      box.querySelectorAll('.btnDel').forEach(b => b.onclick = async () => {
-        if (!confirm('Delete this file?')) return;
-        console.log("Deleting fileId:", b.dataset.id);
-
-        await guardFetch(BASE + '/files/' + encodeURIComponent(b.dataset.id), { method: 'DELETE' }); listFiles(); listJobs();
-      });
-      box.querySelectorAll('.btnSubs').forEach(b => b.onclick = subsFetch);
-      box.querySelectorAll('.btnMeta').forEach(b => b.onclick = showMeta);
-
-      $("#filesPage").textContent = String(j?.page || filesPage);
-      $("#filesTotal").textContent = `Total: ${total}`;
-      const maxPage = Math.max(1, Math.ceil(total / size));
-      $("#filesPrev").disabled = (filesPage <= 1);
-      $("#filesNext").disabled = (filesPage >= maxPage);
     }
 
+    $("#adminFilesPage").textContent = String(j?.page || adminFilesPage);
+    $("#adminFilesTotal").textContent = `Total: ${total}`;
+    const maxPage = Math.max(1, Math.ceil(total / size));
+    $("#adminFilesPrev").disabled = (adminFilesPage <= 1);
+    $("#adminFilesNext").disabled = (adminFilesPage >= maxPage);
+  }
 
-    async function downloadOriginal(e) {
-      const id = e.currentTarget.dataset.id;
-
-      const r = await guardFetch(BASE + '/download/original/' + encodeURIComponent(id));
-      if (!r.ok) { toast('Download failed', 'error'); return; }
-
-      const data = await r.json();           // 解析 JSON
-      const url = data.downloadUrl;          // 拿到 pre-signed URL
-
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = '';                        // S3 的 Content-Disposition 會保留原始檔名
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
+  // --- Init ---
+  (async function initAuthFromStorage() {
+    const saved = localStorage.getItem("idToken");
+    if (saved) {
+      token = saved;
+      toggleUI(true);          // 先切到登录 UI（3A 暂隐藏）
+      await refreshMe();       // 再据 /me 决定是否显示 3A
+      listFiles(); listJobs();
+      if (!jobsInterval) jobsInterval = setInterval(() => token && listJobs(), 5000);
+    } else {
+      toggleUI(false);
     }
+  })();
+</script>
 
-    // --- top up ---
-    $("#btnTopup").onclick = async () => {
-      if (!token) { toast('Please login first', 'error'); return; }
-      const cents = parseInt($("#topupAmt").value, 10);
-      if (!Number.isInteger(cents) || cents <= 0) { toast('Invalid amount', 'error'); return; }
-
-      const r = await guardFetch(BASE + '/accounts/topup', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ amount_cents: cents })
-      });
-      const j = await r.json().catch(() => null);
-      if (r.ok && (j?.ok !== false)) {
-        toast(`Topped up $${(cents / 100).toFixed(2)}`);
-        refreshMe();
-      } else {
-        toast(`Top up failed: ${j?.error || j?.message || r.status}`, 'error');
-      }
-    };
-
-
-    // --- Subs / Meta ---
-    async function subsFetch(e) {
-      const id = e.currentTarget.dataset.id;
-      const card = e.currentTarget.closest('.item');
-      const titleEl = card?.querySelector('.item-title');
-      const fallback = (titleEl?.textContent || '').replace(/\.[a-z0-9]+$/i, '').trim();
-
-      const query = prompt('Search subtitles (title/keywords):', fallback);
-      if (!query) return;
-
-      const r = await guardFetch(`${BASE}/files/${encodeURIComponent(id)}/subs`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ query, languages: ['en', 'zh', 'zh-CN', 'zh-TW'] })
-      });
-      if (!r.ok) {
-        let msg = 'OpenSubtitles fetch failed';
-        try { const j = await r.json(); if (j?.error) msg += `: ${j.error}` } catch { }
-        toast(msg, 'error'); return;
-      }
-      toast('Subtitles metadata saved (see Meta)');
-    }
-
-    async function showMeta(e) {
-      const id = e.currentTarget.dataset.id;
-      const r = await guardFetch(`${BASE}/files/${encodeURIComponent(id)}/meta`);
-      if (!r.ok) { toast('Failed to load metadata', 'error'); return; }
-      const j = await r.json().catch(() => null);
-      const meta = j?.meta || null;
-
-      const w = window.open('', '_blank', 'width=800,height=600');
-      w.document.write(
-        '<pre style="font-family:ui-monospace,Menlo,Consolas,monospace;white-space:pre-wrap;">'
-        + (escapeHtml(JSON.stringify(meta, null, 2)) || '(empty)')
-        + '</pre>'
-      );
-    }
-
-    // --- jobs ---
-    $("#btnJobs").onclick = () => { jobsPage = 1; listJobs(); };
-    $("#jobsPrev").onclick = () => { if (jobsPage > 1) { jobsPage--; listJobs(); } };
-    $("#jobsNext").onclick = () => { jobsPage++; listJobs(); };
-
-    $("#jobStatus").onchange = () => { jobsPage = 1; listJobs(); };
-    $("#jobsSort").onchange = () => { jobsPage = 1; listJobs(); };
-    $("#jobsOrder").onchange = () => { jobsPage = 1; listJobs(); };
-    $("#jobsSize").onchange = () => { jobsPage = 1; listJobs(); };
-
-    async function transcode(fileId) {
-      const fmtEl = document.getElementById('fmt-' + fileId);
-      const format = fmtEl ? fmtEl.value : 'mp4';
-      const r = await guardFetch(BASE + '/transcode/' + encodeURIComponent(fileId), {
-        method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ preset: 'slow', crf: 22, scale: '1280:720', format })
-      });
-      if (r.status === 402) { toast('Insufficient funds. Please top up.', 'error'); return; }
-      const j = await r.json().catch(() => null);
-      if (!r.ok || !j?.ok) { toast('Transcode failed', 'error'); return; }
-      toast(`Transcode started → ${format}`);
-      refreshMe();
-      listJobs();
-    }
-
-    async function listJobs() {
-      const status = $("#jobStatus").value;
-      const sort = $("#jobsSort").value;
-      const order = $("#jobsOrder").value;
-      const size = parseInt($("#jobsSize").value, 10) || 10;
-
-      const r = await guardFetch(`${BASE}/jobs?page=${jobsPage}&size=${size}&sort=${sort}&order=${order}${status ? `&status=${status}` : ''}`);
-      const j = await r.json().catch(() => null);
-
-      const total = j?.total || 0;
-      const box = $("#jobs"); box.innerHTML = ''; const items = j && j.items ? j.items : [];
-      if (!items.length) { box.innerHTML = '<div class="empty">No jobs yet.</div>'; return; }
-      items.forEach(job => {
-        const status = String(job.status || '').toLowerCase();
-        const kind = status === 'completed' ? 'success' : status === 'failed' ? 'danger' : 'warn';
-        const row = document.createElement('div'); row.className = 'item';
-        row.innerHTML = `
-      <div class="item-head">
-        <div class="item-title">Job <code>${escapeHtml(job.id)}</code></div>
-        <div class="actions">
-          <span class="pill ${kind}">${status === 'running' ? '<span class="spinner"></span> ' : ''}${escapeHtml(status)}</span>
-          ${status === 'completed' ? `<button class="btn success btnDownTc" data-id="${job.id}">Download output</button>` : ''}
-          ${status === 'completed' && job.has_thumbnail ? `<button class="btn secondary btnThumb" data-id="${job.id}">Thumbnail</button>` : ''}
-          <button class="btn secondary btnLogs" data-id="${job.id}">Logs</button>
-        </div>
-      </div>
-      <div class="small muted">
-        progress: ${(job.progress ?? 0).toFixed(0)}%
-        <span class="sep">•</span> updated: ${escapeHtml(job.updated_at || '-')}
-        <span class="sep">•</span> charged/refunded: ${(job.charged_cents / 100).toFixed(2)} / ${(job.refunded_cents / 100).toFixed(2)}
-      </div>`;
-        box.appendChild(row);
-      });
-      box.querySelectorAll('.btnDownTc').forEach(b => b.onclick = downloadOutput);
-      box.querySelectorAll('.btnLogs').forEach(b => b.onclick = showLogs);
-      box.querySelectorAll('.btnThumb').forEach(b => b.onclick = showThumb);
-
-      $("#jobsPage").textContent = String(j?.page || jobsPage);
-      $("#jobsTotal").textContent = `Total: ${total}`;
-      const maxPage = Math.max(1, Math.ceil(total / size));
-      $("#jobsPrev").disabled = (jobsPage <= 1);
-      $("#jobsNext").disabled = (jobsPage >= maxPage);
-    }
-
-    async function showLogs(e) {
-      const jobId = e.currentTarget.dataset.id;
-      const r = await guardFetch(BASE + '/jobs/' + encodeURIComponent(jobId) + '/logs');
-      const text = await r.text();
-      const w = window.open('', '_blank', 'width=800,height=600');
-      w.document.write('<pre style="font-family:ui-monospace,Menlo,Consolas,monospace;white-space:pre-wrap;">' + (escapeHtml(text) || '(empty)') + '</pre>');
-    }
-    async function showThumb(e) {
-      const jobId = e.currentTarget.dataset.id;
-      window.open(`${BASE}/jobs/${encodeURIComponent(jobId)}/thumbnail`, '_blank', 'width=800,height=600');
-    }
-    async function downloadOutput(e) {
-      const jobId = e.currentTarget.dataset.id;
-      const r = await guardFetch(BASE + '/download/transcoded/' + encodeURIComponent(jobId));
-      if (r.status === 409) { toast('Output not ready yet', 'error'); return; }
-      if (!r.ok) { toast('Download failed', 'error'); return; }
-
-      const data = await r.json();           // 解析 JSON
-      const url = data.downloadUrl;          // 拿到 pre-signed URL
-
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = '';                        // S3 的 Content-Disposition 會保留原始檔名
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-
-    }
-
-    // --- Admin files (3A) ---
-    $("#btnAdminList").onclick = () => { adminFilesPage = 1; listAdminFiles(); };
-    $("#adminFilesPrev").onclick = () => { if (adminFilesPage > 1) { adminFilesPage--; listAdminFiles(); } };
-    $("#adminFilesNext").onclick = () => { adminFilesPage++; listAdminFiles(); };
-    $("#adminFilesQ").oninput = debounce(() => { adminFilesPage = 1; listAdminFiles(); }, 300);
-    $("#adminFilesSort").onchange = () => { adminFilesPage = 1; listAdminFiles(); };
-    $("#adminFilesOrder").onchange = () => { adminFilesPage = 1; listAdminFiles(); };
-    $("#adminFilesSize").onchange = () => { adminFilesPage = 1; listAdminFiles(); };
-
-    // --- Init: try existing token ---
-    (async function initAuthFromStorage() {
-      const saved = localStorage.getItem("idToken");
-      if (saved) {
-        token = saved;
-        await checkAdminStatus();
-
-        toggleUI(true);
-      } else {
-        toggleUI(false);
-      }
-    })();
-  </script>
 </body>
 
 </html>

@@ -46,6 +46,11 @@ export function initializePool(secretConfig) {
       await c.query(`SET statement_timeout = 15000;`); // 防止长时间占用连接
     } catch {}
   });
+  
+  pool.on('connect', client => {
+  client.query('SET search_path TO s400, public;').catch(() => {});
+});
+
 
   return pool;
 }

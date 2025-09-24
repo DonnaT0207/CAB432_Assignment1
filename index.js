@@ -198,14 +198,6 @@ function isAdminByEnv(username) {
   return ADM_USERNAMES.includes(u);
 }
 
-// function isAdminByEnv(payload, username) {
-//   const u = (username || "").toLowerCase();
-//   return (process.env.ADMIN_USERNAMES || "")
-//     .split(",")
-//     .map((s) => s.trim().toLowerCase())
-//     .filter(Boolean)
-//     .includes(u);
-// }
 
 app.post("/auth/confirm", async (req, res) => {
   const { username, code } = req.body || {};
@@ -399,7 +391,6 @@ app.post("/upload-url", auth, async (req, res) => {
     console.log("Presigned upload URL generated!");
 
     // 存 DB（只存 metadata，不存檔案）
-
     const insert = run(
       `INSERT INTO files (id,owner,filename,stored_path,size_bytes,mime,uploaded_at,owner_groups)
       VALUES ($1,$2,$3,$4,$5,$6,now(),$7)`,
@@ -493,13 +484,15 @@ app.get("/files/:id/meta", auth, async (req, res) => {
   res.json({ ok: true, meta });
 });
 
-// OpenSubtitles metadata
+// ----- 简化版 OpenSubtitles subtitles meta -----
 app.post("/files/:id/subs", auth, async (req, res) => {
-  if (!OPENSUBTITLES_API_KEY)
-    return res
-      .status(400)
-      .json({ ok: false, error: "OPENSUBTITLES_API_KEY missing" });
+  if (!OPENSUBTITLES_API_KEY) {
+    return res.status(400).json({ ok: false, error: "OPENSUBTITLES_API_KEY missing" });
+  }
 
+  const OS_USER_AGENT = process.env.OPENSUBTITLES_USER_AGENT || "video-api-client/1.0";
+
+  // 确认文件存在
   const f = await one(`SELECT id FROM files WHERE id=$1 AND owner=$2`, [
     req.params.id,
     req.user.sub,
@@ -507,86 +500,163 @@ app.post("/files/:id/subs", auth, async (req, res) => {
   if (!f) return res.sendStatus(404);
 
   const query = String(req.body?.query || "").trim();
-  const languages = Array.isArray(req.body?.languages)
-    ? req.body.languages
-    : ["en"];
-  if (!query)
+  const languages = Array.isArray(req.body?.languages) ? req.body.languages : ["en"];
+  if (!query) {
     return res.status(400).json({ ok: false, error: "query required" });
+  }
 
   try {
     const url =
       `https://api.opensubtitles.com/api/v1/subtitles?` +
-      `query=${encodeURIComponent(query)}&languages=${encodeURIComponent(
-        languages.join(",")
-      )}` +
-      `&order_by=downloads&order_direction=desc&ai_translated=exclude`;
+      `query=${encodeURIComponent(query)}&languages=${encodeURIComponent(languages.join(","))}` +
+      `&order_by=downloads&order_direction=desc`;
+
     const r = await fetch(url, {
-      headers: { "Api-Key": OPENSUBTITLES_API_KEY, Accept: "application/json" },
+      headers: {
+        "Api-Key": OPENSUBTITLES_API_KEY,
+        "User-Agent": OS_USER_AGENT,
+        "Accept": "application/json",
+      },
     });
-    if (!r.ok)
-      return res
-        .status(502)
-        .json({ ok: false, error: `OpenSubtitles HTTP ${r.status}` });
-    const j = await r.json();
+
+    const text = await r.text();
+    if (!r.ok) {
+      return res.status(502).json({
+        ok: false,
+        error: "OpenSubtitlesHTTP",
+        message: `HTTP ${r.status}: ${text}`,
+      });
+    }
+
+    const j = JSON.parse(text);
     const top = Array.isArray(j?.data) ? j.data.slice(0, 5) : [];
+
     const payload = {
       opensubtitles: {
         query,
         languages,
         total: j?.total_count ?? top.length,
         top,
+        fetched_at: new Date().toISOString(),
       },
     };
+
     await run(
       `UPDATE files
          SET ext_meta = COALESCE(ext_meta, '{}'::jsonb) || $1::jsonb
        WHERE id=$2 AND owner=$3`,
       [JSON.stringify(payload), req.params.id, req.user.sub]
     );
-    res.json({ ok: true, count: top.length });
+
+    res.json({ ok: true, count: top.length, meta: payload });
   } catch (e) {
-    res.status(500).json({ ok: false, error: e.message });
+    res.status(500).json({ ok: false, error: "SubsFetchError", message: e.message });
   }
 });
+
+
+
+// app.delete("/files/:id", auth, async (req, res) => {
+//   const row = await one(
+//     `SELECT stored_path FROM files WHERE id=$1 AND owner=$2`,
+//     [req.params.id, req.user.sub]
+//   );
+//   if (!row) return res.sendStatus(404);
+
+//   try {
+//     // 刪除 S3 檔案
+//     await s3.send(
+//       new DeleteObjectCommand({
+//         Bucket: BUCKET,
+//         Key: row.stored_path, // 這裡就是存 DB 的 Key
+//       })
+//     );
+//   } catch (e) {
+//     log("S3 delete warn:", e.message);
+//     return res.status(500).json({ ok: false, error: "S3 delete failed" });
+//   }
+
+//   // 刪除 DB 紀錄
+//   const r = await run(`DELETE FROM files WHERE id=$1 AND owner=$2`, [
+//     req.params.id,
+//     req.user.sub,
+//   ]);
+
+//   if (r.rowCount !== 1)
+//     return res
+//       .status(500)
+//       .json({ ok: false, error: "DB record delete failed." });
+
+//   res.json({ ok: true });
+// });
 
 app.delete("/files/:id", auth, async (req, res) => {
+  const fileId = req.params.id;
+  const owner = req.user.sub;
+
+  // 先查出 S3 Key（stored_path），以便稍后异步删除
   const row = await one(
     `SELECT stored_path FROM files WHERE id=$1 AND owner=$2`,
-    [req.params.id, req.user.sub]
+    [fileId, owner]
   );
   if (!row) return res.sendStatus(404);
+  const s3Key = row.stored_path;
 
+  // 1) 事务：解除 jobs 关联并删除 files 记录
+  const client = await pool.connect();
   try {
-    // 刪除 S3 檔案
-    await s3.send(
-      new DeleteObjectCommand({
-        Bucket: BUCKET,
-        Key: row.stored_path, // 這裡就是存 DB 的 Key
-      })
+    await client.query("BEGIN");
+
+    // 解除关联：不让历史转码任务受到 FK/业务影响
+    await client.query(
+      `UPDATE jobs SET file_id = NULL WHERE file_id=$1 AND owner=$2`,
+      [fileId, owner]
     );
+
+    // 删除文件记录
+    const del = await client.query(
+      `DELETE FROM files WHERE id=$1 AND owner=$2`,
+      [fileId, owner]
+    );
+
+    if (del.rowCount !== 1) {
+      await client.query("ROLLBACK");
+      return res
+        .status(404)
+        .json({ ok: false, error: "file not found or already deleted" });
+    }
+
+    await client.query("COMMIT");
   } catch (e) {
-    log("S3 delete warn:", e.message);
-    return res.status(500).json({ ok: false, error: "S3 delete failed" });
+    await client.query("ROLLBACK");
+    console.error("[DELETE /files/:id] DB error:", e);
+    return res.status(500).json({ ok: false, error: "DB delete failed" });
+  } finally {
+    client.release();
   }
 
-  // 刪除 DB 紀錄
-
-  const r = await run(`DELETE FROM files WHERE id=$1 AND owner=$2`, [
-    req.params.id,
-    req.user.sub,
-  ]);
-
-  if (r.rowCount !== 1)
-    return res
-      .status(500)
-      .json({ ok: false, error: "DB record delete failed." });
-
+  // 2) 先立即回应前端成功，让 UI 能刷新
   res.json({ ok: true });
+
+  // 3) S3 删除改为“尽力而为”，失败只打日志，不影响用户体验
+  (async () => {
+    try {
+      await s3.send(
+        new DeleteObjectCommand({
+          Bucket: BUCKET,
+          Key: s3Key,
+        })
+      );
+    } catch (e) {
+      // S3 删除失败一般不阻断流程（可能文件早已不存在）
+      console.warn("[DELETE /files/:id] S3 delete warn:", e?.message || e);
+    }
+  })().catch(() => {});
 });
+
 
 // ----- admin: list all users' files -----
 app.get("/admin/files", auth, async (req, res) => {
-  console.log("req.user:", req.user);
   if (!req.user?.admin)
     return res.status(403).json({ ok: false, error: "forbidden" });
 
