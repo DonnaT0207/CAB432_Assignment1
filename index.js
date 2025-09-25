@@ -34,7 +34,7 @@ import { CognitoJwtVerifier } from "aws-jwt-verify";
 import crypto from "crypto";
 
 import { initializePool, one, all, run } from "./db.js";
-import { fromIni } from "@aws-sdk/credential-provider-ini";
+// import { fromIni } from "@aws-sdk/credential-provider-ini";
 // for screte manager
 import {
   SecretsManagerClient,
@@ -58,14 +58,15 @@ export let CONFIG = {};
 (async () => {
 
 // Utility: decide how to load credentials
-async function getCredentialsProvider() {
-  if (process.env.IS_EC2 === "true") {
-    return defaultProvider(); // 直接回傳 provider function
-  } else {
-    return fromIni({ profile: "default" });
-  }
-}
-const creds = await getCredentialsProvider();
+// async function getCredentialsProvider() {
+//   if (process.env.IS_EC2 === "true") {
+//     return defaultProvider(); // 直接回傳 provider function
+//   } else {
+//     return fromIni({ profile: "default" });
+//   }
+// }
+// const creds = await getCredentialsProvider();
+const creds = defaultProvider();
 
 // ---- load params from the param store ----
 
@@ -161,12 +162,27 @@ function safeDir(preferred) {
     return tmp;
   }
 }
-const DATA_DIR = safeDir(path.join(process.cwd(), "data"));
-const UP_DIR = path.join(DATA_DIR, "uploads");
-const OUT_DIR = path.join(DATA_DIR, "outputs");
-const THUMB_DIR = path.join(OUT_DIR, "thumbs");
-for (const d of [UP_DIR, OUT_DIR, THUMB_DIR])
-  fs.mkdirSync(d, { recursive: true });
+// const DATA_DIR = safeDir(path.join(process.cwd(), "data"));
+// const UP_DIR = path.join(DATA_DIR, "uploads");
+// const OUT_DIR = path.join(DATA_DIR, "outputs");
+// const THUMB_DIR = path.join(OUT_DIR, "thumbs");
+// for (const d of [UP_DIR, OUT_DIR, THUMB_DIR])
+//   fs.mkdirSync(d, { recursive: true });
+
+
+// EFS
+const DATA_DIR = safeDir(process.env.LOCAL_DATA_DIR || path.join(process.cwd(), "data"));
+const UP_DIR   = path.join(DATA_DIR, "uploads");
+const OUT_DIR  = path.join(DATA_DIR, "outputs");
+const THUMB_DIR= path.join(OUT_DIR, "thumbs");
+for (const d of [UP_DIR, OUT_DIR, THUMB_DIR]) fs.mkdirSync(d, { recursive: true });
+// 增加一个专用的临时目录给 ffmpeg 等用
+const TMP_DIR = path.join(DATA_DIR, "tmp");
+fs.mkdirSync(TMP_DIR, { recursive: true });
+// 通用临时变量（很多库都会用到）
+process.env.TMPDIR = TMP_DIR;
+
+
 
 // ---- admin allowlist from env ----
 const ADM_USERNAMES = (CONFIG.ADMIN_USERNAMES || "")
@@ -227,7 +243,9 @@ async function auth(req, res, next) {
 }
 
 // Multer temp
-const tmpDir = path.join(process.cwd(), "uploads");
+// const tmpDir = path.join(process.cwd(), "uploads");
+
+const tmpDir = UP_DIR;
 if (!fs.existsSync(tmpDir)) fs.mkdirSync(tmpDir, { recursive: true });
 const storage = multer.diskStorage({
   destination: (_req, _file, cb) => cb(null, tmpDir),
@@ -1148,13 +1166,23 @@ app.post("/transcode/:fileId", auth, async (req, res) => {
       })
     );
 
+    // // 5) 清理本地临时文件
+    // try {
+    //   fs.unlinkSync(thumbPath);
+    // } catch {}
+    // try {
+    //   fs.unlinkSync(outPath);
+    // } catch {}
+
+    const KEEP_LOCAL_CACHE = process.env.KEEP_LOCAL_CACHE === "1";
+
     // 5) 清理本地临时文件
-    try {
-      fs.unlinkSync(thumbPath);
-    } catch {}
-    try {
-      fs.unlinkSync(outPath);
-    } catch {}
+    if (!KEEP_LOCAL_CACHE) {
+      try { fs.unlinkSync(thumbPath); } catch {}
+      try { fs.unlinkSync(outPath); } catch {}
+    } else {
+      console.log("[CACHE] kept local files on", DATA_DIR);
+    }
 
     // 6) 更新任务完成
     await dbConn.query(
