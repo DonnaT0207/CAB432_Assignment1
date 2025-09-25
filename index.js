@@ -25,12 +25,16 @@ import {
   SignUpCommand,
   ConfirmSignUpCommand,
   InitiateAuthCommand,
+  AssociateSoftwareTokenCommand,   // ← 新增
+  VerifySoftwareTokenCommand,      // ← 新增
+  SetUserMFAPreferenceCommand,     // ← 新增
+  RespondToAuthChallengeCommand    // ← 新增
 } from "@aws-sdk/client-cognito-identity-provider";
 import { CognitoJwtVerifier } from "aws-jwt-verify";
 import crypto from "crypto";
 
 import { initializePool, one, all, run } from "./db.js";
-import { fromIni } from "@aws-sdk/credential-provider-ini";
+// import { fromIni } from "@aws-sdk/credential-provider-ini";
 // for screte manager
 import {
   SecretsManagerClient,
@@ -73,14 +77,15 @@ testCache(memcached);
 (async () => {
 
 // Utility: decide how to load credentials
-async function getCredentialsProvider() {
-  if (process.env.IS_EC2 === "true") {
-    return defaultProvider(); // 直接回傳 provider function
-  } else {
-    return fromIni({ profile: "default" });
-  }
-}
-const creds = await getCredentialsProvider();
+// async function getCredentialsProvider() {
+//   if (process.env.IS_EC2 === "true") {
+//     return defaultProvider(); // 直接回傳 provider function
+//   } else {
+//     return fromIni({ profile: "default" });
+//   }
+// }
+// const creds = await getCredentialsProvider();
+const creds = defaultProvider();
 
 // ---- load params from the param store ----
 
@@ -137,7 +142,7 @@ const pool = initializePool({
 
 // ----- config -----
 const PORT = Number(process.env.PORT || 8080);
-const OPENSUBTITLES_API_KEY = process.env.OPENSUBTITLES_API_KEY || "";
+const OPENSUBTITLES_API_KEY = secret.OPENSUBTITLES_API_KEY || "";
 ffmpeg.setFfmpegPath(ffmpegInstaller.path);
 const log = (...a) => console.log(new Date().toISOString(), ...a);
 
@@ -176,12 +181,27 @@ function safeDir(preferred) {
     return tmp;
   }
 }
-const DATA_DIR = safeDir(path.join(process.cwd(), "data"));
-const UP_DIR = path.join(DATA_DIR, "uploads");
-const OUT_DIR = path.join(DATA_DIR, "outputs");
-const THUMB_DIR = path.join(OUT_DIR, "thumbs");
-for (const d of [UP_DIR, OUT_DIR, THUMB_DIR])
-  fs.mkdirSync(d, { recursive: true });
+// const DATA_DIR = safeDir(path.join(process.cwd(), "data"));
+// const UP_DIR = path.join(DATA_DIR, "uploads");
+// const OUT_DIR = path.join(DATA_DIR, "outputs");
+// const THUMB_DIR = path.join(OUT_DIR, "thumbs");
+// for (const d of [UP_DIR, OUT_DIR, THUMB_DIR])
+//   fs.mkdirSync(d, { recursive: true });
+
+
+// EFS
+const DATA_DIR = safeDir(process.env.LOCAL_DATA_DIR || path.join(process.cwd(), "data"));
+const UP_DIR   = path.join(DATA_DIR, "uploads");
+const OUT_DIR  = path.join(DATA_DIR, "outputs");
+const THUMB_DIR= path.join(OUT_DIR, "thumbs");
+for (const d of [UP_DIR, OUT_DIR, THUMB_DIR]) fs.mkdirSync(d, { recursive: true });
+// 增加一个专用的临时目录给 ffmpeg 等用
+const TMP_DIR = path.join(DATA_DIR, "tmp");
+fs.mkdirSync(TMP_DIR, { recursive: true });
+// 通用临时变量（很多库都会用到）
+process.env.TMPDIR = TMP_DIR;
+
+
 
 // ---- admin allowlist from env ----
 const ADM_USERNAMES = (CONFIG.ADMIN_USERNAMES || "")
@@ -242,7 +262,9 @@ async function auth(req, res, next) {
 }
 
 // Multer temp
-const tmpDir = path.join(process.cwd(), "uploads");
+// const tmpDir = path.join(process.cwd(), "uploads");
+
+const tmpDir = UP_DIR;
 if (!fs.existsSync(tmpDir)) fs.mkdirSync(tmpDir, { recursive: true });
 const storage = multer.diskStorage({
   destination: (_req, _file, cb) => cb(null, tmpDir),
@@ -356,59 +378,188 @@ app.post("/auth/confirm", async (req, res) => {
   }
 });
 
+// app.post("/login", async (req, res) => {
+//   const { username, password } = req.body || {};
+//   if (!username || !password) {
+//     return res
+//       .status(400)
+//       .json({ ok: false, error: "username, password required" });
+//   }
+
+//   let idToken;
+//   try {
+//     const authParams = { USERNAME: username, PASSWORD: password };
+//     const sh = makeSecretHash(username);
+//     if (sh) authParams.SECRET_HASH = sh;
+
+//     const out = await cogClient.send(
+//       new InitiateAuthCommand({
+//         AuthFlow: "USER_PASSWORD_AUTH",
+//         ClientId: COG_CLIENT_ID,
+//         AuthParameters: authParams,
+//       })
+//     );
+
+//     idToken = out?.AuthenticationResult?.IdToken;
+//     if (!idToken) return res.status(401).json({ ok: false, error: "no token" });
+//   } catch (e) {
+//     console.error("[/login] Cognito error:", e.name, e.message);
+//     return res.status(401).json({
+//       ok: false,
+//       error: e.name || "AuthError",
+//       message: e.message || "Login failed",
+//     });
+//   }
+
+//   res.json({ ok: true, authToken: idToken });
+
+//   try {
+//     await run(
+//       `INSERT INTO accounts(owner, balance_cents, updated_at)
+//        VALUES ($1, 0, now())
+//        ON CONFLICT (owner) DO NOTHING`,
+//       [username]
+//     );
+//   } catch (e) {
+//     console.warn("[login] ensure account row failed:", e.message);
+//   }
+// });
+
+
 app.post("/login", async (req, res) => {
   const { username, password } = req.body || {};
   if (!username || !password) {
-    return res
-      .status(400)
-      .json({ ok: false, error: "username, password required" });
+    return res.status(400).json({ ok: false, error: "username and password required" });
   }
 
-  let idToken;
   try {
+    // 组装登录参数
     const authParams = { USERNAME: username, PASSWORD: password };
     const sh = makeSecretHash(username);
     if (sh) authParams.SECRET_HASH = sh;
 
-    const out = await cogClient.send(
-      new InitiateAuthCommand({
-        AuthFlow: "USER_PASSWORD_AUTH",
-        ClientId: COG_CLIENT_ID,
-        AuthParameters: authParams,
-      })
-    );
+    // 调用 Cognito 登录
+    const out = await cogClient.send(new InitiateAuthCommand({
+      AuthFlow: "USER_PASSWORD_AUTH",
+      ClientId: COG_CLIENT_ID,
+      AuthParameters: authParams,
+    }));
 
-    idToken = out?.AuthenticationResult?.IdToken;
-    if (!idToken) return res.status(401).json({ ok: false, error: "no token" });
-  } catch (e) {
-    console.error("[/login] Cognito error:", e.name, e.message);
-    return res.status(401).json({
-      ok: false,
-      error: e.name || "AuthError",
-      message: e.message || "Login failed",
-    });
-  }
+    // ========== 处理 MFA 挑战 ==========
+    if (out.ChallengeName === "SOFTWARE_TOKEN_MFA") {
+      return res.json({
+        ok: true,
+        challenge: "SOFTWARE_TOKEN_MFA",
+        session: out.Session,
+        username
+      });
+    }
 
-  res.json({ ok: true, authToken: idToken });
+    // ========== 正常登录 ==========
+    const idToken = out?.AuthenticationResult?.IdToken;
+    const accessToken = out?.AuthenticationResult?.AccessToken;
 
-  try {
+    if (!idToken || !accessToken) {
+      return res.status(401).json({ ok: false, error: "no token" });
+    }
+
+    // 在本地数据库里初始化账户余额（Postgres 版本，与你现有 schema 一致）
     await run(
       `INSERT INTO accounts(owner, balance_cents, updated_at)
-       VALUES ($1, 0, now())
-       ON CONFLICT (owner) DO NOTHING`,
+        VALUES ($1, 0, now())
+      ON CONFLICT (owner) DO NOTHING`,
       [username]
     );
+
+
+    return res.json({ ok: true, authToken: idToken, accessToken });
   } catch (e) {
-    console.warn("[login] ensure account row failed:", e.message);
+    console.error("login error", e);
+    return res.status(401).json({ ok: false, error: e.name || "AuthError", message: e.message });
   }
 });
+
+app.post("/auth/mfa/verify-login", async (req, res) => {
+  const { username, code, session } = req.body || {};
+  if (!username || !code || !session) {
+    return res.status(400).json({ ok: false, error: "username, code, session required" });
+  }
+  try {
+    const sh = makeSecretHash(username);
+    const out = await cogClient.send(new RespondToAuthChallengeCommand({
+      ClientId: COG_CLIENT_ID,
+      ChallengeName: "SOFTWARE_TOKEN_MFA",
+      Session: session,
+      ChallengeResponses: {
+        USERNAME: username,
+        SOFTWARE_TOKEN_MFA_CODE: String(code).trim(),
+        ...(sh ? { SECRET_HASH: sh } : {})
+      }
+    }));
+    const idToken = out?.AuthenticationResult?.IdToken;
+    const accessToken = out?.AuthenticationResult?.AccessToken;
+    if (!idToken || !accessToken) {
+      return res.status(401).json({ ok: false, error: "no token after mfa" });
+    }
+    return res.json({ ok: true, authToken: idToken, accessToken });
+  } catch (e) {
+    return res.status(401).json({ ok: false, error: e.name || "MFAChallengeError", message: e.message });
+  }
+});
+
+app.post("/auth/mfa/setup", auth, async (req, res) => {
+  const { accessToken, issuer = "VideoAPI" } = req.body || {};
+  if (!accessToken) return res.status(400).json({ ok: false, error: "accessToken required" });
+
+  try {
+    const assoc = await cogClient.send(new AssociateSoftwareTokenCommand({
+      AccessToken: accessToken
+    }));
+    const secret = assoc.SecretCode; // Base32
+    if (!secret) return res.status(500).json({ ok: false, error: "no secret from cognito" });
+    const label = encodeURIComponent(`${issuer}:${req.user.sub}`);
+    const issuerEnc = encodeURIComponent(issuer);
+    const otpauthUrl = `otpauth://totp/${label}?secret=${secret}&issuer=${issuerEnc}&algorithm=SHA1&digits=6&period=30`;
+    return res.json({ ok: true, secret, otpauthUrl });
+  } catch (e) {
+    return res.status(400).json({ ok: false, error: e.name || "MFASetupError", message: e.message });
+  }
+});
+
+app.post("/auth/mfa/enable", auth, async (req, res) => {
+  const { accessToken, code } = req.body || {};
+  if (!accessToken || !code) return res.status(400).json({ ok: false, error: "accessToken, code required" });
+
+  try {
+    const verify = await cogClient.send(new VerifySoftwareTokenCommand({
+      AccessToken: accessToken,
+      UserCode: String(code).trim(),
+      FriendlyDeviceName: "auth-app"
+    }));
+    if (verify.Status !== "SUCCESS") {
+      return res.status(401).json({ ok: false, error: "verify_failed" });
+    }
+
+    await cogClient.send(new SetUserMFAPreferenceCommand({
+      AccessToken: accessToken,
+      SoftwareTokenMfaSettings: { Enabled: true, PreferredMfa: true }
+    }));
+    return res.json({ ok: true });
+  } catch (e) {
+    return res.status(400).json({ ok: false, error: e.name || "MFAEnableError", message: e.message });
+  }
+});
+
+
+
+
+
+
 
 // whoami
 app.get("/auth/whoami", auth, (req, res) => {
   res.json({ ok: true, user: req.user });
 });
-
-
 
 // ----- account -----
 app.get("/me", auth, async (req, res) => {
@@ -1034,13 +1185,23 @@ app.post("/transcode/:fileId", auth, async (req, res) => {
       })
     );
 
+    // // 5) 清理本地临时文件
+    // try {
+    //   fs.unlinkSync(thumbPath);
+    // } catch {}
+    // try {
+    //   fs.unlinkSync(outPath);
+    // } catch {}
+
+    const KEEP_LOCAL_CACHE = process.env.KEEP_LOCAL_CACHE === "1";
+
     // 5) 清理本地临时文件
-    try {
-      fs.unlinkSync(thumbPath);
-    } catch {}
-    try {
-      fs.unlinkSync(outPath);
-    } catch {}
+    if (!KEEP_LOCAL_CACHE) {
+      try { fs.unlinkSync(thumbPath); } catch {}
+      try { fs.unlinkSync(outPath); } catch {}
+    } else {
+      console.log("[CACHE] kept local files on", DATA_DIR);
+    }
 
     // 6) 更新任务完成
     await dbConn.query(
