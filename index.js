@@ -223,7 +223,6 @@ async function auth(req, res, next) {
 }
 
 // Multer temp
-
 const tmpDir = path.join(process.cwd(), "uploads");
 if (!fs.existsSync(tmpDir)) fs.mkdirSync(tmpDir, { recursive: true });
 const storage = multer.diskStorage({
@@ -236,7 +235,6 @@ function nowTs() {
 const upload = multer({ storage });
 
 // helpers
-
 function listParams(req, opt) {
   const page = Math.max(1, parseInt(req.query.page || "1", 10));
   const size = Math.min(100, Math.max(1, parseInt(req.query.size || "10", 10)));
@@ -281,12 +279,6 @@ async function createJobWithCharge(owner, fileId, cents, params) {
     client.release();
   }
 }
-
-
-
-
-
-
 
 
 // ----- app -----
