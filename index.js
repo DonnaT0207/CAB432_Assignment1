@@ -38,11 +38,14 @@ import {
 } from "@aws-sdk/client-secrets-manager";
 import { defaultProvider } from "@aws-sdk/credential-provider-node";
 import { SSMClient, GetParameterCommand } from "@aws-sdk/client-ssm";
-// import { CONFIG, initConfig } from "./config.js";
+
+// memcachedClient.js
+import { createMemcachedClient } from "./memcachedClient.js";
 
 import "dotenv/config";
 //  -----public variables from env file----------------------
 const AWS_REGION = process.env.AWS_REGION;
+const memcached = createMemcachedClient();
 
 // ----- resolve __dirname -----
 const __filename = fileURLToPath(import.meta.url);
@@ -50,6 +53,22 @@ const __dirname = path.dirname(__filename);
 
 export let CONFIG = {};
 
+async function testCache(memcached) {
+  if (!memcached) {
+    console.log("⚠️  Memcached not initialized, skipping cache test.");
+    return;
+  }
+  try {
+    await memcached.aSet("hello", "world", 10);
+    const value = await memcached.aGet("hello");
+    console.log("✅ Cached value:", value);
+  } catch (err) {
+    console.error("❌ Cache test failed:", err);
+  }
+}
+
+
+testCache(memcached);
 
 (async () => {
 
