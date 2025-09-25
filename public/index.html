@@ -331,6 +331,8 @@
           <button id="btnLogout" class="btn secondary" disabled>Logout</button>
           <a id="link-signup" href="javascript:void(0)" class="small muted" style="margin-left:8px">Sign up</a>
           <a id="link-confirm" href="javascript:void(0)" class="small muted" style="margin-left:8px">Confirm</a>
+          <a id="link-mfa-setup" href="javascript:void(0)" class="small muted" style="margin-left:8px">Enable MFA</a>
+
         </div>
         <div class="row small">
           <span>Status:</span>
@@ -467,10 +469,27 @@
 
   <div class="toasts" id="toasts"></div>
 
+  <!-- MFA Modal -->
+<div id="mfaModal" style="display:none; position:fixed; inset:0; z-index:60;">
+  <div style="position:absolute; inset:0; background:rgba(0,0,0,.45)"></div>
+  <div style="position:relative; margin:6vh auto; max-width:720px; background:rgba(255,255,255,.06);
+              border:1px solid rgba(255,255,255,.12); border-radius:14px; padding:18px; color:#e5e7eb;">
+    <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; margin-bottom:8px;">
+      <h3 style="margin:0;font-size:18px;">Enable MFA (TOTP)</h3>
+      <button id="mfaClose" class="btn secondary" style="padding:4px 8px;">Close</button>
+    </div>
+    <div id="mfaBody" class="small" style="color:#9ca3af">Loading…</div>
+  </div>
+</div>
+
   <script>
   // --- state & utils ---
   const BASE = location.origin;
   let token = null, jobsInterval = null;
+
+  // mfa
+  let accessToken = null;
+
   let filesPage = 1, jobsPage = 1, adminFilesPage = 1;
   let isAdmin = false;
 
@@ -585,29 +604,38 @@
 
   // --- login/logout (唯一版本) ---
   $("#btnLogin").onclick = async () => {
-    const r = await fetch(BASE + '/login', {
+  const r = await fetch(BASE + '/login', {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ username: $("#u").value, password: $("#p").value })
+  });
+  const j = await r.json().catch(() => null);
+
+  // A) 如果返回挑战，先让用户输入 6 位码，再去 /auth/mfa/verify-login 换取 token
+  if (j?.challenge === 'SOFTWARE_TOKEN_MFA' && j?.session) {
+    const code = prompt("MFA code (6 digits):");
+    if (!code) { toast('MFA code required', 'error'); return; }
+    const r2 = await fetch(BASE + '/auth/mfa/verify-login', {
       method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ username: $("#u").value, password: $("#p").value })
+      body: JSON.stringify({ username: j.username, code, session: j.session })
     });
-    const j = await r.json().catch(() => null);
+    const j2 = await r2.json().catch(() => null);
+    if (!r2.ok || !j2?.authToken) { toast(`MFA verify failed${j2?.error ? `: ${j2.error}` : ''}`, 'error'); return; }
+    token = j2.authToken; accessToken = j2.accessToken || null;
+  } else {
+    // B) 普通登录
     if (!r.ok || !j?.authToken) { toast(`Login failed${j?.error ? `: ${j.error}` : ''}`, 'error'); return; }
+    token = j.authToken; accessToken = j.accessToken || null;
+  }
 
-    token = j.authToken;
-    localStorage.setItem("idToken", token);
+  localStorage.setItem("idToken", token);
+  toggleUI(true);
+  await refreshMe();
+  listFiles();
+  listJobs();
+  if (!jobsInterval) jobsInterval = setInterval(() => token && listJobs(), 5000);
+  toast('Login successful');
+};
 
-    // 先切到已登录 UI（隐藏 3A，稍后 refreshMe 再决定是否显示 3A）
-    toggleUI(true);
-
-    // 立刻刷新权限 & 余额（决定 3A 是否显示）
-    await refreshMe();
-
-    // 再加载数据并开启轮询
-    listFiles();
-    listJobs();
-    if (!jobsInterval) jobsInterval = setInterval(() => token && listJobs(), 5000);
-
-    toast('Login successful');
-  };
 
   $("#btnLogout").onclick = () => {
     token = null;
@@ -630,6 +658,106 @@
     if (r.ok && (j?.ok !== false)) { toast(`Topped up $${(cents / 100).toFixed(2)}`); await refreshMe(); }
     else toast(`Top up failed: ${j?.error || j?.message || r.status}`, 'error');
   };
+
+  function showMfaModal(html) {
+  const modal = document.getElementById("mfaModal");
+  const body  = document.getElementById("mfaBody");
+  body.innerHTML = html;
+  modal.style.display = 'block';
+}
+
+function hideMfaModal() {
+  const modal = document.getElementById("mfaModal");
+  modal.style.display = 'none';
+}
+
+document.getElementById("mfaClose")?.addEventListener("click", hideMfaModal);
+
+async function submitEnableMfa(code) {
+  if (!code || String(code).trim().length !== 6) {
+    toast("Please enter the 6-digit code.", "error");
+    return;
+  }
+  const r2 = await fetch(BASE + "/auth/mfa/enable", {
+    method: "POST",
+    headers: { "content-type": "application/json", ...authHeaders() },
+    body: JSON.stringify({ accessToken, code: String(code).trim() })
+  });
+  const j2 = await r2.json().catch(() => null);
+  if (!r2.ok || !j2?.ok) {
+    toast(`Enable MFA failed: ${j2?.error || r2.status}`, "error");
+    return;
+  }
+  hideMfaModal();
+  toast("MFA enabled. Next login will ask for 6-digit code.");
+}
+
+document.getElementById("link-mfa-setup")?.addEventListener("click", async () => {
+  if (!token || !accessToken) {
+    toast("Please login first", "error");
+    return;
+  }
+  // Step 1: 拿 secret & otpauthUrl
+  const r1 = await fetch(BASE + "/auth/mfa/setup", {
+    method: "POST",
+    headers: { "content-type": "application/json", ...authHeaders() },
+    body: JSON.stringify({ accessToken, issuer: "VideoAPI" })
+  });
+  const j1 = await r1.json().catch(() => null);
+  if (!r1.ok || !j1?.ok) {
+    showMfaModal(`<p style="color:#f87171">MFA setup failed: ${j1?.error || r1.status}</p>`);
+    toast(`MFA setup failed: ${j1?.error || r1.status}`, "error");
+    return;
+  }
+
+  // Step 2: 渲染二维码 + 输入框
+  const qr = "https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=" +
+             encodeURIComponent(j1.otpauthUrl);
+  showMfaModal(`
+    <div style="display:grid; grid-template-columns: 220px 1fr; gap:16px;">
+      <div style="text-align:center">
+        <img src="${qr}" alt="QR" width="180" height="180" style="border-radius:8px;border:1px solid rgba(255,255,255,.12)"/>
+        <div class="small" style="margin-top:8px;color:#9ca3af;word-break:break-all;">
+          <div><b>Secret:</b> <code>${j1.secret}</code></div>
+        </div>
+      </div>
+      <div>
+        <p class="small" style="color:#9ca3af;margin-top:0;">
+          1) Scan the QR code on the left with Google/Microsoft Authenticator or 1Password (or manually enter the Secret)<br/>
+          2) Enter the 6-digit verification code generated in the App below and click “Verify & Enable”.
+        </p>
+        <div class="row" style="gap:10px; align-items:center;">
+          <input id="mfaInput" type="text" inputmode="numeric" pattern="\\d{6}" maxlength="6" placeholder="6-digit code" style="width:140px;">
+          <button id="mfaVerifyBtn" class="btn success">Verify & Enable</button>
+        </div>
+        <div class="small" style="margin-top:8px;color:#9ca3af;">
+          or URL:<a href="${j1.otpauthUrl}" target="_blank">otpauth link</a>
+        </div>
+      </div>
+    </div>
+  `);
+
+  // 绑定按钮事件
+  document.getElementById("mfaVerifyBtn")?.addEventListener("click", () => {
+    const code = document.getElementById("mfaInput")?.value || "";
+    submitEnableMfa(code);
+  });
+
+  // 输入框回车提交
+  document.getElementById("mfaInput")?.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      const code = e.currentTarget.value || "";
+      submitEnableMfa(code);
+    }
+  });
+
+  // 自动聚焦
+  setTimeout(() => document.getElementById("mfaInput")?.focus(), 0);
+});
+
+
+
+
 
   // --- upload ---
   async function uploadFileWithRetry(file, maxRetries = 3) {
@@ -803,41 +931,6 @@
     await refreshMe();
     listJobs();
   }
-
-  // MFA
-  // 启用 TOTP（一次性流程）
-document.getElementById("link-mfa-setup")?.addEventListener("click", async () => {
-  const username = $("#u").value.trim();
-  const password = $("#p").value;
-  if (!username || !password) { toast("Enter username & password first", "error"); return; }
-
-  // ① 请求 secret & otpauthUrl
-  const r1 = await fetch(BASE + "/auth/mfa/setup", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ username, password, issuer: "VideoAPI" })
-  });
-  const j1 = await r1.json().catch(() => null);
-  if (!r1.ok || !j1?.ok) { toast("MFA setup failed", "error"); return; }
-
-  // 简单做法：弹出 otpauth 链接和 secret，让用户去 App 手动添加或扫码
-  // 你也可以 window.open 一个新窗口，用任意在线二维码生成服务渲染 j1.otpauthUrl
-  alert(`Scan with Google Authenticator or add secret manually:\n\nSecret: ${j1.secret}\n\nURL: ${j1.otpauthUrl}`);
-
-  // ② 让用户输入 6 位验证码
-  const code = prompt("Enter the 6-digit code from your Authenticator app:");
-  if (!code) { toast("MFA code required", "error"); return; }
-
-  const r2 = await fetch(BASE + "/auth/mfa/enable", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ username, session: j1.session, code })
-  });
-  const j2 = await r2.json().catch(() => null);
-  if (!r2.ok || !j2?.ok) { toast("Enable MFA failed", "error"); return; }
-
-  toast("MFA enabled. Next login will ask for 6-digit code.");
-});
 
   async function listJobs() {
     const status = $("#jobStatus").value;
