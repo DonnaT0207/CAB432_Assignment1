@@ -25,6 +25,10 @@ import {
   SignUpCommand,
   ConfirmSignUpCommand,
   InitiateAuthCommand,
+  AssociateSoftwareTokenCommand,   // ← 新增
+  VerifySoftwareTokenCommand,      // ← 新增
+  SetUserMFAPreferenceCommand,     // ← 新增
+  RespondToAuthChallengeCommand    // ← 新增
 } from "@aws-sdk/client-cognito-identity-provider";
 import { CognitoJwtVerifier } from "aws-jwt-verify";
 import crypto from "crypto";
@@ -337,59 +341,188 @@ app.post("/auth/confirm", async (req, res) => {
   }
 });
 
+// app.post("/login", async (req, res) => {
+//   const { username, password } = req.body || {};
+//   if (!username || !password) {
+//     return res
+//       .status(400)
+//       .json({ ok: false, error: "username, password required" });
+//   }
+
+//   let idToken;
+//   try {
+//     const authParams = { USERNAME: username, PASSWORD: password };
+//     const sh = makeSecretHash(username);
+//     if (sh) authParams.SECRET_HASH = sh;
+
+//     const out = await cogClient.send(
+//       new InitiateAuthCommand({
+//         AuthFlow: "USER_PASSWORD_AUTH",
+//         ClientId: COG_CLIENT_ID,
+//         AuthParameters: authParams,
+//       })
+//     );
+
+//     idToken = out?.AuthenticationResult?.IdToken;
+//     if (!idToken) return res.status(401).json({ ok: false, error: "no token" });
+//   } catch (e) {
+//     console.error("[/login] Cognito error:", e.name, e.message);
+//     return res.status(401).json({
+//       ok: false,
+//       error: e.name || "AuthError",
+//       message: e.message || "Login failed",
+//     });
+//   }
+
+//   res.json({ ok: true, authToken: idToken });
+
+//   try {
+//     await run(
+//       `INSERT INTO accounts(owner, balance_cents, updated_at)
+//        VALUES ($1, 0, now())
+//        ON CONFLICT (owner) DO NOTHING`,
+//       [username]
+//     );
+//   } catch (e) {
+//     console.warn("[login] ensure account row failed:", e.message);
+//   }
+// });
+
+
 app.post("/login", async (req, res) => {
   const { username, password } = req.body || {};
   if (!username || !password) {
-    return res
-      .status(400)
-      .json({ ok: false, error: "username, password required" });
+    return res.status(400).json({ ok: false, error: "username and password required" });
   }
 
-  let idToken;
   try {
+    // 组装登录参数
     const authParams = { USERNAME: username, PASSWORD: password };
     const sh = makeSecretHash(username);
     if (sh) authParams.SECRET_HASH = sh;
 
-    const out = await cogClient.send(
-      new InitiateAuthCommand({
-        AuthFlow: "USER_PASSWORD_AUTH",
-        ClientId: COG_CLIENT_ID,
-        AuthParameters: authParams,
-      })
-    );
+    // 调用 Cognito 登录
+    const out = await cogClient.send(new InitiateAuthCommand({
+      AuthFlow: "USER_PASSWORD_AUTH",
+      ClientId: COG_CLIENT_ID,
+      AuthParameters: authParams,
+    }));
 
-    idToken = out?.AuthenticationResult?.IdToken;
-    if (!idToken) return res.status(401).json({ ok: false, error: "no token" });
-  } catch (e) {
-    console.error("[/login] Cognito error:", e.name, e.message);
-    return res.status(401).json({
-      ok: false,
-      error: e.name || "AuthError",
-      message: e.message || "Login failed",
-    });
-  }
+    // ========== 处理 MFA 挑战 ==========
+    if (out.ChallengeName === "SOFTWARE_TOKEN_MFA") {
+      return res.json({
+        ok: true,
+        challenge: "SOFTWARE_TOKEN_MFA",
+        session: out.Session,
+        username
+      });
+    }
 
-  res.json({ ok: true, authToken: idToken });
+    // ========== 正常登录 ==========
+    const idToken = out?.AuthenticationResult?.IdToken;
+    const accessToken = out?.AuthenticationResult?.AccessToken;
 
-  try {
+    if (!idToken || !accessToken) {
+      return res.status(401).json({ ok: false, error: "no token" });
+    }
+
+    // 在本地数据库里初始化账户余额（Postgres 版本，与你现有 schema 一致）
     await run(
       `INSERT INTO accounts(owner, balance_cents, updated_at)
-       VALUES ($1, 0, now())
-       ON CONFLICT (owner) DO NOTHING`,
+        VALUES ($1, 0, now())
+      ON CONFLICT (owner) DO NOTHING`,
       [username]
     );
+
+
+    return res.json({ ok: true, authToken: idToken, accessToken });
   } catch (e) {
-    console.warn("[login] ensure account row failed:", e.message);
+    console.error("login error", e);
+    return res.status(401).json({ ok: false, error: e.name || "AuthError", message: e.message });
   }
 });
+
+app.post("/auth/mfa/verify-login", async (req, res) => {
+  const { username, code, session } = req.body || {};
+  if (!username || !code || !session) {
+    return res.status(400).json({ ok: false, error: "username, code, session required" });
+  }
+  try {
+    const sh = makeSecretHash(username);
+    const out = await cogClient.send(new RespondToAuthChallengeCommand({
+      ClientId: COG_CLIENT_ID,
+      ChallengeName: "SOFTWARE_TOKEN_MFA",
+      Session: session,
+      ChallengeResponses: {
+        USERNAME: username,
+        SOFTWARE_TOKEN_MFA_CODE: String(code).trim(),
+        ...(sh ? { SECRET_HASH: sh } : {})
+      }
+    }));
+    const idToken = out?.AuthenticationResult?.IdToken;
+    const accessToken = out?.AuthenticationResult?.AccessToken;
+    if (!idToken || !accessToken) {
+      return res.status(401).json({ ok: false, error: "no token after mfa" });
+    }
+    return res.json({ ok: true, authToken: idToken, accessToken });
+  } catch (e) {
+    return res.status(401).json({ ok: false, error: e.name || "MFAChallengeError", message: e.message });
+  }
+});
+
+app.post("/auth/mfa/setup", auth, async (req, res) => {
+  const { accessToken, issuer = "VideoAPI" } = req.body || {};
+  if (!accessToken) return res.status(400).json({ ok: false, error: "accessToken required" });
+
+  try {
+    const assoc = await cogClient.send(new AssociateSoftwareTokenCommand({
+      AccessToken: accessToken
+    }));
+    const secret = assoc.SecretCode; // Base32
+    if (!secret) return res.status(500).json({ ok: false, error: "no secret from cognito" });
+    const label = encodeURIComponent(`${issuer}:${req.user.sub}`);
+    const issuerEnc = encodeURIComponent(issuer);
+    const otpauthUrl = `otpauth://totp/${label}?secret=${secret}&issuer=${issuerEnc}&algorithm=SHA1&digits=6&period=30`;
+    return res.json({ ok: true, secret, otpauthUrl });
+  } catch (e) {
+    return res.status(400).json({ ok: false, error: e.name || "MFASetupError", message: e.message });
+  }
+});
+
+app.post("/auth/mfa/enable", auth, async (req, res) => {
+  const { accessToken, code } = req.body || {};
+  if (!accessToken || !code) return res.status(400).json({ ok: false, error: "accessToken, code required" });
+
+  try {
+    const verify = await cogClient.send(new VerifySoftwareTokenCommand({
+      AccessToken: accessToken,
+      UserCode: String(code).trim(),
+      FriendlyDeviceName: "auth-app"
+    }));
+    if (verify.Status !== "SUCCESS") {
+      return res.status(401).json({ ok: false, error: "verify_failed" });
+    }
+
+    await cogClient.send(new SetUserMFAPreferenceCommand({
+      AccessToken: accessToken,
+      SoftwareTokenMfaSettings: { Enabled: true, PreferredMfa: true }
+    }));
+    return res.json({ ok: true });
+  } catch (e) {
+    return res.status(400).json({ ok: false, error: e.name || "MFAEnableError", message: e.message });
+  }
+});
+
+
+
+
+
+
 
 // whoami
 app.get("/auth/whoami", auth, (req, res) => {
   res.json({ ok: true, user: req.user });
 });
-
-
 
 // ----- account -----
 app.get("/me", auth, async (req, res) => {
