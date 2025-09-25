@@ -122,7 +122,7 @@ const pool = initializePool({
 
 // ----- config -----
 const PORT = Number(process.env.PORT || 8080);
-const OPENSUBTITLES_API_KEY = process.env.OPENSUBTITLES_API_KEY || "";
+const OPENSUBTITLES_API_KEY = secret.OPENSUBTITLES_API_KEY || "";
 ffmpeg.setFfmpegPath(ffmpegInstaller.path);
 const log = (...a) => console.log(new Date().toISOString(), ...a);
 
@@ -678,7 +678,7 @@ app.post("/files/:id/subs", auth, async (req, res) => {
   }
 
   const OS_USER_AGENT =
-    CONFIG.OPENSUBTITLES_USER_AGENT || "video-api-client/1.0";
+    secret.OPENSUBTITLES_USER_AGENT || "video-api-client/1.0";
 
   // 确认文件存在
   const f = await one(`SELECT id FROM files WHERE id=$1 AND owner=$2`, [
