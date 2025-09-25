@@ -678,7 +678,7 @@ app.post("/files/:id/subs", auth, async (req, res) => {
   }
 
   const OS_USER_AGENT =
-    secret.OPENSUBTITLES_USER_AGENT || "video-api-client/1.0";
+    CONFIG.OPENSUBTITLES_USER_AGENT || "video-api-client/1.0";
 
   // 确认文件存在
   const f = await one(`SELECT id FROM files WHERE id=$1 AND owner=$2`, [
