@@ -7,17 +7,22 @@ const memcachedAddress =
 
 export function createMemcachedClient() {
   if (process.env.IS_EC2 !== "true") {
-    console.log("Not EC2 → using fake in-memory cache (Map).");
-    const store = new Map();
-
-    return {
-      aGet: async (key) => store.get(key) || null,
-      aSet: async (key, value, ttl) => {
-        store.set(key, value);
-        setTimeout(() => store.delete(key), ttl * 1000);
-      },
-    };
+    console.log("Not EC2 → skipping Memcached setup.");
+    return null; // 或 undefined
   }
+
+  //   if (process.env.IS_EC2 !== "true") {
+  //     console.log("Not EC2 → using fake in-memory cache (Map).");
+  //     const store = new Map();
+
+  //     return {
+  //       aGet: async (key) => store.get(key) || null,
+  //       aSet: async (key, value, ttl) => {
+  //         store.set(key, value);
+  //         setTimeout(() => store.delete(key), ttl * 1000);
+  //       },
+  //     };
+  //   }
 
   console.log("Running on EC2 → connecting to ElastiCache Memcached.");
   const memcached = new Memcached(memcachedAddress);

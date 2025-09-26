@@ -57,22 +57,22 @@ const __dirname = path.dirname(__filename);
 
 export let CONFIG = {};
 
-async function testCache(memcached) {
-  if (!memcached) {
-    console.log("⚠️  Memcached not initialized, skipping cache test.");
-    return;
-  }
-  try {
-    await memcached.aSet("hello", "world", 10);
-    const value = await memcached.aGet("hello");
-    console.log("✅ Cached value:", value);
-  } catch (err) {
-    console.error("❌ Cache test failed:", err);
-  }
-}
+// async function testCache(memcached) {
+//   if (!memcached) {
+//     console.log("  Memcached not initialized, skipping cache.");
+//     return;
+//   }
+//   try {
+//     await memcached.aSet("hello", "world", 10);
+//     const value = await memcached.aGet("hello");
+//     console.log("Cached value:", value);
+//   } catch (err) {
+//     console.error("Cache test failed:", err);
+//   }
+// }
 
 
-testCache(memcached);
+// testCache(memcached);
 
 (async () => {
 
@@ -378,52 +378,6 @@ app.post("/auth/confirm", async (req, res) => {
   }
 });
 
-// app.post("/login", async (req, res) => {
-//   const { username, password } = req.body || {};
-//   if (!username || !password) {
-//     return res
-//       .status(400)
-//       .json({ ok: false, error: "username, password required" });
-//   }
-
-//   let idToken;
-//   try {
-//     const authParams = { USERNAME: username, PASSWORD: password };
-//     const sh = makeSecretHash(username);
-//     if (sh) authParams.SECRET_HASH = sh;
-
-//     const out = await cogClient.send(
-//       new InitiateAuthCommand({
-//         AuthFlow: "USER_PASSWORD_AUTH",
-//         ClientId: COG_CLIENT_ID,
-//         AuthParameters: authParams,
-//       })
-//     );
-
-//     idToken = out?.AuthenticationResult?.IdToken;
-//     if (!idToken) return res.status(401).json({ ok: false, error: "no token" });
-//   } catch (e) {
-//     console.error("[/login] Cognito error:", e.name, e.message);
-//     return res.status(401).json({
-//       ok: false,
-//       error: e.name || "AuthError",
-//       message: e.message || "Login failed",
-//     });
-//   }
-
-//   res.json({ ok: true, authToken: idToken });
-
-//   try {
-//     await run(
-//       `INSERT INTO accounts(owner, balance_cents, updated_at)
-//        VALUES ($1, 0, now())
-//        ON CONFLICT (owner) DO NOTHING`,
-//       [username]
-//     );
-//   } catch (e) {
-//     console.warn("[login] ensure account row failed:", e.message);
-//   }
-// });
 
 
 app.post("/login", async (req, res) => {
@@ -627,12 +581,36 @@ app.post("/upload-url", auth, async (req, res) => {
       ]
     );
 
-    res.json({
+     res.json({
       ok: true,
       fileId: id,
       s3Key,
       uploadUrl,
     });
+
+      // 只有在 EC2 環境才更新 cache
+    if (process.env.IS_EC2 === "true" && memcached) {
+      // 假設更新 /files 第一頁
+      const page = 1, size = 10, sort = "uploaded_at", order = "desc", q = "";
+      const updatedFiles = await all(
+        `SELECT id, filename, size_bytes, mime, uploaded_at
+         FROM files
+         WHERE owner = $1
+         ORDER BY uploaded_at ${order}
+         LIMIT $2 OFFSET $3`,
+        [username, size, 0]
+      );
+
+      const cacheKey = `files:${username}:${page}:${size}:${q}:${sort}:${order}`;
+      await memcached.aSet(
+        cacheKey,
+        { items: updatedFiles, total: updatedFiles.length, page, size, sort, order, q },
+        10
+      );
+      console.log("Cache updated for user:", username);
+    }
+
+   
   } catch (err) {
     console.error("Error generating upload URL:", err);
     res.status(500).json({ ok: false, error: "failed to generate URL" });
@@ -662,39 +640,71 @@ app.get("/debug/db", async (_req, res) => {
     res.status(500).json({ ok: false, error: e.message });
   }
 });
+
+
+
 app.get("/files", auth, async (req, res) => {
   const { page, size, offset, q, sort, order } = listParams(req, {
     sortWhitelist: ["uploaded_at", "size_bytes", "filename"],
     defaultSort: "uploaded_at",
   });
 
-  const where = ["owner = $1"];
-  const params = [req.user.sub];
-  if (q) {
-    where.push(`filename ILIKE $${params.length + 1}`);
-    params.push(`%${q}%`);
+  // Cache key 根據使用者 + query 條件組合
+  const cacheKey = `files:${req.user.sub}:${page}:${size}:${q || ""}:${sort}:${order}`;
+
+  try {
+    // 如果有 memcached，先試著拿快取
+    if (process.env.IS_EC2 === "true" && memcached) {
+      const cached = await memcached.aGet(cacheKey);
+      if (cached) {
+        console.log("Cache hit:", cacheKey);
+        return res.json(cached);
+      }
+      console.log("Cache miss:", cacheKey);
+    }
+
+    // 如果沒有 cache 或 cache miss，走原本 DB 查詢流程
+    const where = ["owner = $1"];
+    const params = [req.user.sub];
+    if (q) {
+      where.push(`filename ILIKE $${params.length + 1}`);
+      params.push(`%${q}%`);
+    }
+    const whereSql = `WHERE ${where.join(" AND ")}`;
+
+    const totalRow = await one(
+      `SELECT COUNT(*)::int AS c FROM files ${whereSql}`,
+      params
+    );
+    const total = totalRow?.c ?? 0;
+
+    const rows = await all(
+      `SELECT id, filename, size_bytes, mime, uploaded_at
+       FROM files ${whereSql}
+       ORDER BY ${sort} ${order}
+       LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+      [...params, size, offset]
+    );
+
+    const result = { items: rows, total, page, size, sort, order, q };
+
+    // 3️⃣ 如果有 memcached，把結果寫進 cache（TTL 10 秒）
+    if (memcached) {
+      await memcached.aSet(cacheKey, result, 10);
+    }
+
+    res.set("X-Total-Count", String(total));
+    res.set("X-Page", String(page));
+    res.set("X-Page-Size", String(size));
+    res.json(result);
+
+  } catch (err) {
+    console.error("Cache/DB error:", err);
+    res.status(500).json({ error: "Internal server error" });
   }
-  const whereSql = `WHERE ${where.join(" AND ")}`;
-
-  const totalRow = await one(
-    `SELECT COUNT(*)::int AS c FROM files ${whereSql}`,
-    params
-  );
-  const total = totalRow?.c ?? 0;
-
-  const rows = await all(
-    `SELECT id, filename, size_bytes, mime, uploaded_at
-     FROM files ${whereSql}
-     ORDER BY ${sort} ${order}
-     LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
-    [...params, size, offset]
-  );
-
-  res.set("X-Total-Count", String(total));
-  res.set("X-Page", String(page));
-  res.set("X-Page-Size", String(size));
-  res.json({ items: rows, total, page, size, sort, order, q });
 });
+
+
 
 app.get("/files/:id/meta", auth, async (req, res) => {
   const row = await one(`SELECT ext_meta FROM files WHERE id=$1 AND owner=$2`, [
@@ -788,12 +798,13 @@ app.post("/files/:id/subs", auth, async (req, res) => {
 
 app.delete("/files/:id", auth, async (req, res) => {
   const fileId = req.params.id;
-  const owner = req.user.sub;
+  const username = req.user.sub;
+
 
   // 先查出 S3 Key（stored_path），以便稍后异步删除
   const row = await one(
     `SELECT stored_path FROM files WHERE id=$1 AND owner=$2`,
-    [fileId, owner]
+    [fileId, username]
   );
   if (!row) return res.sendStatus(404);
   const s3Key = row.stored_path;
@@ -806,13 +817,13 @@ app.delete("/files/:id", auth, async (req, res) => {
     // 解除关联：不让历史转码任务受到 FK/业务影响
     await client.query(
       `UPDATE jobs SET file_id = NULL WHERE file_id=$1 AND owner=$2`,
-      [fileId, owner]
+      [fileId, username]
     );
 
     // 删除文件记录
     const del = await client.query(
       `DELETE FROM files WHERE id=$1 AND owner=$2`,
-      [fileId, owner]
+      [fileId, username]
     );
 
     if (del.rowCount !== 1) {
@@ -833,6 +844,26 @@ app.delete("/files/:id", auth, async (req, res) => {
 
   // 2) 先立即回应前端成功，让 UI 能刷新
   res.json({ ok: true });
+
+  if (process.env.IS_EC2 === "true" && memcached) {
+  const page = 1, size = 10, sort = "uploaded_at", order = "desc", q = "";
+  const updatedFiles = await all(
+    `SELECT id, filename, size_bytes, mime, uploaded_at
+     FROM files
+     WHERE owner = $1
+     ORDER BY uploaded_at ${order}
+     LIMIT $2 OFFSET $3`,
+    [username, size, 0]
+  );
+
+  const cacheKey = `files:${username}:${page}:${size}:${q}:${sort}:${order}`;
+  await memcached.aSet(
+    cacheKey,
+    { items: updatedFiles, total: updatedFiles.length, page, size, sort, order, q },
+    10
+  );
+  console.log("Cache updated after deletion for user:", username);
+}
 
   // 3) S3 删除改为“尽力而为”，失败只打日志，不影响用户体验
   (async () => {

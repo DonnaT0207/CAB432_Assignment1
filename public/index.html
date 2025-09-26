@@ -782,7 +782,9 @@ document.getElementById("link-mfa-setup")?.addEventListener("click", async () =>
           $("#upRes").textContent = JSON.stringify({ fileId, s3Key, ok: true }, null, 2);
           toast('Upload successful');
           filesPage = 1;
+          
           listFiles();
+
           return;
         } catch (err) {
           if (attempt === maxRetries) throw err;
