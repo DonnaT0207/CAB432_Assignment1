@@ -13,71 +13,72 @@ Instructions
 Overview
 ------------------------------------------------
 
-- **Name:** YourName GoesHere
-- **Student number:** n100200300
-- **Partner name (if applicable):** YourPartner NameHere
-- **Application name:** FooBarBaz
-- **Two line description:** I/We implemented this very cool app that does Foo, Bar and Baz.
-- **EC2 instance name or ID:**
+- **Name:** Yixuan Tang
+- **Student number:** n11476290
+- **Partner name (if applicable):** Ya-Sin Lin
+- **Application name:** Video-api
+- **Two line description:** We implemented this cloud-based video processing application that allows users to upload, transcode, and download videos with authentication and access control. The system integrates S3, RDS, and EFS for persistence, Cognito for identity, and additional AWS services for configuration and secrets management.
+- **EC2 instance name or ID:** A2_n11476290
 
 ------------------------------------------------
 
 ### Core - First data persistence service
 
-- **AWS service name:**  [eg. S3]
-- **What data is being stored?:** [eg video files]
-- **Why is this service suited to this data?:** [eg. large files are best suited to blob storage due to size restrictions on other services]
-- **Why is are the other services used not suitable for this data?:**
-- **Bucket/instance/table name:**
+- **AWS service name:** Amazon S3
+- **What data is being stored?:** Video files (uploads and final transcoded outputs)
+- **Why is this service suited to this data?:** S3 is designed for storing large binary files with durability and scalability, ideal for video storage and distribution.
+- **Why is are the other services used not suitable for this data?:** RDS and DynamoDB are optimised for structured data, not large media objects. EFS is good for temporary working files, not long-term storage and public distribution.
+- **Bucket/instance/table name:** n11145862-test
 - **Video timestamp:**
 - **Relevant files:**
-    -
+    - index.js
 
 ### Core - Second data persistence service
 
-- **AWS service name:**  [eg. DynamoDB]
-- **What data is being stored?:** 
-- **Why is this service suited to this data?:**
-- **Why is are the other services used not suitable for this data?:**
-- **Bucket/instance/table name:**
+- **AWS service name:** Amazon RDS (PostgreSQL)
+- **What data is being stored?:** User accounts, video metadata, balances, and file records
+- **Why is this service suited to this data?:** RDS provides strong relational queries and consistency guarantees, which are necessary for structured metadata such as user balances, file ownership, and access records.
+- **Why is are the other services used not suitable for this data?:** S3 cannot store relational metadata, and EFS is unsuitable for transactional records.
+- **Bucket/instance/table name:** video-api-db
 - **Video timestamp:**
 - **Relevant files:**
-    -
+    - db.js
+    - index.js
 
 ### Third data service
 
-- **AWS service name:**  [eg. RDS]
-- **What data is being stored?:** [eg video metadata]
-- **Why is this service suited to this data?:** [eg. ]
-- **Why is are the other services used not suitable for this data?:** [eg. Advanced video search requires complex querries which are not available on S3 and inefficient on DynamoDB]
-- **Bucket/instance/table name:**
+- **AWS service name:** Amazon EFS
+- **What data is being stored?:** Temporary and intermediate working files such as transcode outputs, thumbnails, and cached job files.
+- **Why is this service suited to this data?:** EFS provides a shared, low-latency file system accessible across EC2 instances, making it ideal for concurrent processing workflows.
+- **Why is are the other services used not suitable for this data?:** S3 is optimised for object storage but too slow for intermediate processing. RDS is structured storage, not designed for large binary or temporary files.
+- **Bucket/instance/table name:** n11476290_A2, mount path /mnt/efs/video-api
 - **Video timestamp:**
 - **Relevant files:**
-    -
+    - index.js
 
 ### S3 Pre-signed URLs
 
-- **S3 Bucket names:**
+- **S3 Bucket names:** n11145862-test
 - **Video timestamp:**
 - **Relevant files:**
-    -
+    - index.js
 
 ### In-memory cache
 
 - **ElastiCache instance name:**
-- **What data is being cached?:** [eg. Thumbnails from YouTube videos obatined from external API]
-- **Why is this data likely to be accessed frequently?:** [ eg. Thumbnails from popular YouTube videos are likely to be shown to multiple users ]
+- **What data is being cached?:** Frequently queried RDS metadata and job status results
+- **Why is this data likely to be accessed frequently?:** Users repeatedly check video processing status and metadata, so caching reduces database load.
 - **Video timestamp:**
 - **Relevant files:**
-    -
+    - index.js
 
 ### Core - Statelessness
 
-- **What data is stored within your application that is not stored in cloud data services?:** [eg. intermediate video files that have been transcoded but not stabilised]
-- **Why is this data not considered persistent state?:** [eg. intermediate files can be recreated from source if they are lost]
-- **How does your application ensure data consistency if the app suddenly stops?:** [eg. journal used to record data transactions before they are done.  A separate task scans the journal and corrects problems on startup and once every 5 minutes afterwards. ]
+- **What data is stored within your application that is not stored in cloud data services?:** Only temporary processing state in memory (ffmpeg processes, intermediate tmp files).
+- **Why is this data not considered persistent state?:** These can be recreated from S3 source if lost.
+- **How does your application ensure data consistency if the app suddenly stops?:** Persistent data (uploads, metadata, outputs) are always written to S3, RDS, and EFS. Restarting with a fresh instance does not lose any data.
 - **Relevant files:**
-    -
+    - index.js
 
 ### Graceful handling of persistent connections
 
@@ -89,18 +90,19 @@ Overview
 
 ### Core - Authentication with Cognito
 
-- **User pool name:**
-- **How are authentication tokens handled by the client?:** [eg. Response to login request sets a cookie containing the token.]
+- **User pool name:** n11476290-assignment2
+- **How are authentication tokens handled by the client?:** Tokens are returned by the login endpoint and stored client-side (ID token used in headers for API requests).
 - **Video timestamp:**
 - **Relevant files:**
-    -
+    - index.js
+    - index.html
 
 ### Cognito multi-factor authentication
 
-- **What factors are used for authentication:** [eg. password, SMS code]
+- **What factors are used for authentication:** Password + TOTP software token (Authenticator APP)
 - **Video timestamp:**
 - **Relevant files:**
-    -
+    - index.js
 
 ### Cognito federated identities
 
@@ -111,10 +113,11 @@ Overview
 
 ### Cognito groups
 
-- **How are groups used to set permissions?:** [eg. 'admin' users can delete and ban other users]
+- **How are groups used to set permissions?:** Users in the Admin group can view and manage all uploaded files. Normal users can only access their own uploads.
 - **Video timestamp:**
 - **Relevant files:**
-    -
+    - index.js
+    - index.html
 
 ### Core - DNS with Route53
 
@@ -130,18 +133,18 @@ Overview
 
 ### Secrets manager
 
-- **Secrets names:** [eg. n1234567-youtube-api-key]
+- **Secrets names:** n11476290-A2
 - **Video timestamp:**
 - **Relevant files:**
-    -
+    - index.js
 
 ### Infrastructure as code
 
-- **Technology used:**
-- **Services deployed:**
+- **Technology used:** AWS CDK / CloudFormation
+- **Services deployed:** S3 bucket, RDS instance, EFS filesystem, Cognito user pool, Route53 DNS, Parameter Store, Secrets Manager
 - **Video timestamp:**
 - **Relevant files:**
-    -
+    - Deployment templates/scripts
 
 ### Other (with prior approval only)
 
