@@ -29,7 +29,7 @@ Overview
 - **Why is this service suited to this data?:** S3 is designed for storing large binary files with durability and scalability, ideal for video storage and distribution.
 - **Why is are the other services used not suitable for this data?:** RDS and DynamoDB are optimised for structured data, not large media objects. EFS is good for temporary working files, not long-term storage and public distribution.
 - **Bucket/instance/table name:** n11145862-test
-- **Video timestamp:**
+- **Video timestamp:** 0.01
 - **Relevant files:**
     - index.js
 
@@ -40,7 +40,7 @@ Overview
 - **Why is this service suited to this data?:** RDS provides strong relational queries and consistency guarantees, which are necessary for structured metadata such as user balances, file ownership, and access records.
 - **Why is are the other services used not suitable for this data?:** S3 cannot store relational metadata, and EFS is unsuitable for transactional records.
 - **Bucket/instance/table name:** video-api-db
-- **Video timestamp:**
+- **Video timestamp:** 1.28
 - **Relevant files:**
     - db.js
     - index.js
@@ -52,14 +52,14 @@ Overview
 - **Why is this service suited to this data?:** EFS provides a shared, low-latency file system accessible across EC2 instances, making it ideal for concurrent processing workflows.
 - **Why is are the other services used not suitable for this data?:** S3 is optimised for object storage but too slow for intermediate processing. RDS is structured storage, not designed for large binary or temporary files.
 - **Bucket/instance/table name:** n11476290_A2, mount path /mnt/efs/video-api
-- **Video timestamp:**
+- **Video timestamp:** 2.23
 - **Relevant files:**
     - index.js
 
 ### S3 Pre-signed URLs
 
 - **S3 Bucket names:** n11145862-test
-- **Video timestamp:**
+- **Video timestamp:** 3.51
 - **Relevant files:**
     - index.js
 
@@ -68,7 +68,7 @@ Overview
 - **ElastiCache instance name:**
 - **What data is being cached?:** Frequently queried RDS metadata and job status results
 - **Why is this data likely to be accessed frequently?:** Users repeatedly check video processing status and metadata, so caching reduces database load.
-- **Video timestamp:**
+- **Video timestamp:** 4.37
 - **Relevant files:**
     - index.js
 
@@ -92,7 +92,7 @@ Overview
 
 - **User pool name:** n11476290-assignment2
 - **How are authentication tokens handled by the client?:** Tokens are returned by the login endpoint and stored client-side (ID token used in headers for API requests).
-- **Video timestamp:**
+- **Video timestamp:** 5.39
 - **Relevant files:**
     - index.js
     - index.html
@@ -100,7 +100,7 @@ Overview
 ### Cognito multi-factor authentication
 
 - **What factors are used for authentication:** Password + TOTP software token (Authenticator APP)
-- **Video timestamp:**
+- **Video timestamp:** 6.31
 - **Relevant files:**
     - index.js
 
@@ -114,7 +114,7 @@ Overview
 ### Cognito groups
 
 - **How are groups used to set permissions?:** Users in the Admin group can view and manage all uploaded files. Normal users can only access their own uploads.
-- **Video timestamp:**
+- **Video timestamp:** 7.25
 - **Relevant files:**
     - index.js
     - index.html
@@ -122,29 +122,29 @@ Overview
 ### Core - DNS with Route53
 
 - **Subdomain**:  [eg. myawesomeapp.cab432.com]
-- **Video timestamp:**
+- **Video timestamp:** 8.03
 
 ### Parameter store
 
 - **Parameter names:** [eg. n1234567/base_url]
-- **Video timestamp:**
+- **Video timestamp:** 8.03
 - **Relevant files:**
     -
 
 ### Secrets manager
 
 - **Secrets names:** n11476290-A2
-- **Video timestamp:**
+- **Video timestamp:** 8.03
 - **Relevant files:**
     - index.js
 
 ### Infrastructure as code
 
-- **Technology used:** AWS CDK / CloudFormation
-- **Services deployed:** S3 bucket, RDS instance, EFS filesystem, Cognito user pool, Route53 DNS, Parameter Store, Secrets Manager
+- **Technology used:** 
+- **Services deployed:** 
 - **Video timestamp:**
 - **Relevant files:**
-    - Deployment templates/scripts
+    - 
 
 ### Other (with prior approval only)
 
