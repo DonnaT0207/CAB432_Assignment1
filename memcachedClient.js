@@ -1,19 +1,17 @@
-// memcachedClient.js
 import Memcached from "memcached";
 import util from "node:util";
+import { CONFIG } from "./index.js";
 
-const memcachedAddress =
-  "n11145862a2.km2jzi.cfg.apse2.cache.amazonaws.com:11211";
 
 export function createMemcachedClient() {
   if (process.env.IS_EC2 !== "true") {
     console.log("Not EC2 → skipping Memcached setup.");
-    return null; // 或 undefined
+    return null; // or undefined
   }
 
-
   console.log("Running on EC2 → connecting to ElastiCache Memcached.");
-  const memcached = new Memcached(memcachedAddress);
+  // const memcached = new Memcached(memcachedAddress);
+  const memcached = new Memcached(CONFIG.AWS_CACHE_ENDPOINT);
 
   memcached.aGet = util.promisify(memcached.get);
   memcached.aSet = util.promisify(memcached.set);

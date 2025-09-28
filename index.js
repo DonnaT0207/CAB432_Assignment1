@@ -25,17 +25,16 @@ import {
   SignUpCommand,
   ConfirmSignUpCommand,
   InitiateAuthCommand,
-  AssociateSoftwareTokenCommand, // ← 新增
-  VerifySoftwareTokenCommand, // ← 新增
-  SetUserMFAPreferenceCommand, // ← 新增
-  RespondToAuthChallengeCommand, // ← 新增
+  AssociateSoftwareTokenCommand,
+  VerifySoftwareTokenCommand, 
+  SetUserMFAPreferenceCommand, 
+  RespondToAuthChallengeCommand, 
 } from "@aws-sdk/client-cognito-identity-provider";
 import { CognitoJwtVerifier } from "aws-jwt-verify";
 import crypto from "crypto";
 
 import { initializePool, one, all, run } from "./db.js";
-// import { fromIni } from "@aws-sdk/credential-provider-ini";
-// for screte manager
+
 import {
   SecretsManagerClient,
   GetSecretValueCommand,
@@ -167,10 +166,10 @@ export let CONFIG = {};
   const THUMB_DIR = path.join(OUT_DIR, "thumbs");
   for (const d of [UP_DIR, OUT_DIR, THUMB_DIR])
     fs.mkdirSync(d, { recursive: true });
-  // 增加一个专用的临时目录给 ffmpeg 等用
+
   const TMP_DIR = path.join(DATA_DIR, "tmp");
   fs.mkdirSync(TMP_DIR, { recursive: true });
-  // 通用临时变量（很多库都会用到）
+
   process.env.TMPDIR = TMP_DIR;
 
   // ---- admin allowlist from env ----
@@ -246,12 +245,12 @@ export let CONFIG = {};
       const rawName = payload["cognito:username"];
       const username = typeof rawName === "string" ? rawName.trim() : "";
 
-      // 从 token 中提取 groups
+      // Extract groups from token
       const groups = Array.isArray(payload["cognito:groups"])
         ? payload["cognito:groups"]
         : [];
 
-      // 判断是否 admin
+      // check if is admin
       const isAdmin = groups.includes("Admin") || isAdminByEnv(username);
 
       req.user = {
@@ -400,12 +399,12 @@ export let CONFIG = {};
     }
 
     try {
-      // 组装登录参数
+      // Assemble login paramters
       const authParams = { USERNAME: username, PASSWORD: password };
       const sh = makeSecretHash(username);
       if (sh) authParams.SECRET_HASH = sh;
 
-      // 调用 Cognito 登录
+     
       const out = await cogClient.send(
         new InitiateAuthCommand({
           AuthFlow: "USER_PASSWORD_AUTH",
@@ -414,7 +413,7 @@ export let CONFIG = {};
         })
       );
 
-      // ========== 处理 MFA 挑战 ==========
+      // ==========  MFA  ==========
       if (out.ChallengeName === "SOFTWARE_TOKEN_MFA") {
         return res.json({
           ok: true,
@@ -424,7 +423,7 @@ export let CONFIG = {};
         });
       }
 
-      // ========== 正常登录 ==========
+      // ========== normal login ==========
       const idToken = out?.AuthenticationResult?.IdToken;
       const accessToken = out?.AuthenticationResult?.AccessToken;
 
@@ -432,7 +431,7 @@ export let CONFIG = {};
         return res.status(401).json({ ok: false, error: "no token" });
       }
 
-      // 在本地数据库里初始化账户余额（Postgres 版本，与你现有 schema 一致）
+      // Initialize account balances in the local database (Postgres version, consistent with your existing schema)
       await run(
         `INSERT INTO accounts(owner, balance_cents, updated_at)
         VALUES ($1, 0, now())
@@ -440,7 +439,7 @@ export let CONFIG = {};
         [username]
       );
 
-      // ✅ Resume jobs after login
+      // Resume jobs after login
       resumeIncompleteJobs(username, idToken).catch((err) =>
         console.error("resume jobs error", err)
       );
@@ -600,7 +599,7 @@ export let CONFIG = {};
     const s3Key = `${username}/uploaded/${safeName}`;
 
     try {
-      // 建立 presigned PUT URL
+      // creat presigned PUT URL
       const command = new PutObjectCommand({
         Bucket: BUCKET,
         Key: s3Key,
@@ -610,7 +609,7 @@ export let CONFIG = {};
       const uploadUrl = await getSignedUrl(s3, command, { expiresIn: 3600 });
       console.log("Presigned upload URL generated!");
 
-      // 存 DB（只存 metadata，不存檔案）
+      // save data into DB（only metadata not the files itself）
       const insert = run(
         `INSERT INTO files (id,owner,filename,stored_path,size_bytes,mime,uploaded_at,owner_groups)
       VALUES ($1,$2,$3,$4,$5,$6,now(),$7)`,
@@ -632,9 +631,9 @@ export let CONFIG = {};
         uploadUrl,
       });
 
-      // 只有在 EC2 環境才更新 cache
+      // only update cache if run in EC2
       if (process.env.IS_EC2 === "true" && memcached) {
-        // 假設更新 /files 第一頁
+        // refresh page 1 in the file list 
         const page = 1,
           size = 10,
           sort = "uploaded_at",
@@ -701,13 +700,13 @@ export let CONFIG = {};
       defaultSort: "uploaded_at",
     });
 
-    // Cache key 根據使用者 + query 條件組合
+    // Cache key 
     const cacheKey = `files:${req.user.sub}:${page}:${size}:${
       q || ""
     }:${sort}:${order}`;
 
     try {
-      // 如果有 memcached，先試著拿快取
+      // if memcached exsit, use data in cache
       if (process.env.IS_EC2 === "true" && memcached) {
         const cached = await memcached.aGet(cacheKey);
         if (cached) {
@@ -717,7 +716,6 @@ export let CONFIG = {};
         console.log("Cache miss:", cacheKey);
       }
 
-      // 如果沒有 cache 或 cache miss，走原本 DB 查詢流程
       const where = ["owner = $1"];
       const params = [req.user.sub];
       if (q) {
@@ -742,7 +740,7 @@ export let CONFIG = {};
 
       const result = { items: rows, total, page, size, sort, order, q };
 
-      // 3️⃣ 如果有 memcached，把結果寫進 cache（TTL 10 秒）
+
       if (memcached) {
         await memcached.aSet(cacheKey, result, 10);
       }
@@ -767,7 +765,7 @@ export let CONFIG = {};
     res.json({ ok: true, meta });
   });
 
-  // ----- 简化版 OpenSubtitles subtitles meta -----
+  // -----  OpenSubtitles subtitles meta -----
   app.post("/files/:id/subs", auth, async (req, res) => {
     if (!OPENSUBTITLES_API_KEY) {
       return res
@@ -778,7 +776,6 @@ export let CONFIG = {};
     const OS_USER_AGENT =
       CONFIG.OPENSUBTITLES_USER_AGENT || "video-api-client/1.0";
 
-    // 确认文件存在
     const f = await one(`SELECT id FROM files WHERE id=$1 AND owner=$2`, [
       req.params.id,
       req.user.sub,
@@ -858,18 +855,18 @@ export let CONFIG = {};
     if (!row) return res.sendStatus(404);
     const s3Key = row.stored_path;
 
-    // 1) 事务：解除 jobs 关联并删除 files 记录
+    //Transaction: unlink jobs and delete files records
     const client = await pool.connect();
     try {
       await client.query("BEGIN");
 
-      // 解除关联：不让历史转码任务受到 FK/业务影响
+      // Unlink associations: prevent historical transcode jobs from being affected by FK constraints or business logic
       await client.query(
         `UPDATE jobs SET file_id = NULL WHERE file_id=$1 AND owner=$2`,
         [fileId, username]
       );
 
-      // 删除文件记录
+      // delet file
       const del = await client.query(
         `DELETE FROM files WHERE id=$1 AND owner=$2`,
         [fileId, username]
@@ -891,7 +888,7 @@ export let CONFIG = {};
       client.release();
     }
 
-    // 2) 先立即回应前端成功，让 UI 能刷新
+    // 2) Immediately respond to the frontend to allow the UI to refresh
     res.json({ ok: true });
 
     if (process.env.IS_EC2 === "true" && memcached) {
@@ -926,7 +923,8 @@ export let CONFIG = {};
       console.log("Cache updated after deletion for user:", username);
     }
 
-    // 3) S3 删除改为“尽力而为”，失败只打日志，不影响用户体验
+    // 3) S3 deletion is best-effort; failures are logged but do not affect user experience
+
     (async () => {
       try {
         await s3.send(
@@ -936,7 +934,7 @@ export let CONFIG = {};
           })
         );
       } catch (e) {
-        // S3 删除失败一般不阻断流程（可能文件早已不存在）
+        // S3 deletion failures generally do not block the process (file may already be gone)
         console.warn("[DELETE /files/:id] S3 delete warn:", e?.message || e);
       }
     })().catch(() => {});
@@ -1094,7 +1092,7 @@ export let CONFIG = {};
     try {
       const command = new GetObjectCommand({
         Bucket: BUCKET,
-        Key: j.output_path, // 這裡必須是 S3 Key
+        Key: j.output_path, // has to be S3 Key
         ResponseContentDisposition: `attachment; filename="${path.basename(
           j.output_name || j.output_path
         )}"`,
@@ -1147,10 +1145,10 @@ export let CONFIG = {};
       [jobId]
     );
 
-    // 单任务专用 DB 连接（避免连接暴增）
+    // Dedicated DB connection for a single task (prevents connection explosion)
     const dbConn = await pool.connect();
 
-    // 输出文件路径（可能在失败时清理）
+  // Output file path (may be cleaned up if the task fails)
     const outId = uuidv4();
     const outName = `${outId}-${path.basename(
       f.filename,
@@ -1159,7 +1157,7 @@ export let CONFIG = {};
     const outPath = path.join(OUT_DIR, outName);
     let thumbPath = null;
 
-    // —— 批量写日志 & 限频进度 —— //
+    // —— Batch log writing & throttled progress updates ——
     let buffered = "";
     let flushTimer = null;
     const flushLog = async () => {
@@ -1198,7 +1196,7 @@ export let CONFIG = {};
     };
 
     try {
-      // 1) 从 S3 读原始文件并转码到本地
+      // 1) Read the original file from S3 and transcode it locally
       await new Promise(async (resolve, reject) => {
         const s3Object = await s3.send(
           new GetObjectCommand({ Bucket: BUCKET, Key: f.stored_path })
@@ -1235,7 +1233,7 @@ export let CONFIG = {};
           .save(outPath);
       });
 
-      // 2) 上传转码结果到 S3
+      // 2) upload file to S3
       const outputKey = `${req.user.sub}/transcoded/${outName}`;
       await s3.send(
         new PutObjectCommand({
@@ -1246,7 +1244,7 @@ export let CONFIG = {};
         })
       );
 
-      // 3) 生成缩略图（本地）
+      // 3) Generate thumbnail locally
       fs.mkdirSync(THUMB_DIR, { recursive: true });
       const thumbName = `${uuidv4()}-${path.basename(
         f.filename,
@@ -1268,7 +1266,7 @@ export let CONFIG = {};
           .save(thumbPath);
       });
 
-      // 4) 上传缩略图到 S3
+      // 4) upload thumbnail to S3
       const thumbKey = `${req.user.sub}/thumbnails/${thumbName}`;
       await s3.send(
         new PutObjectCommand({
@@ -1281,7 +1279,8 @@ export let CONFIG = {};
 
       const KEEP_LOCAL_CACHE = process.env.KEEP_LOCAL_CACHE === "1";
 
-      // 5) 清理本地临时文件
+      // Clean up local temporary files
+
       if (!KEEP_LOCAL_CACHE) {
         try {
           fs.unlinkSync(thumbPath);
@@ -1293,7 +1292,7 @@ export let CONFIG = {};
         console.log("[CACHE] kept local files on", DATA_DIR);
       }
 
-      // 6) 更新任务完成
+      // 6) update DB record
       await dbConn.query(
         `UPDATE jobs SET status='completed', progress=100,
          output_path=$1, output_name=$2, thumbnail_path=$3, thumbnail_name=$4,
@@ -1309,7 +1308,6 @@ export let CONFIG = {};
         [jobId]
       );
 
-      // 失败退款（幂等）
       try {
         await dbConn.query("BEGIN");
         const r = await dbConn.query(
@@ -1333,7 +1331,6 @@ export let CONFIG = {};
         console.error("refund error:", e2);
       }
 
-      // 清理本地临时文件（失败场景）
       try {
         if (thumbPath && fs.existsSync(thumbPath)) fs.unlinkSync(thumbPath);
       } catch {}
@@ -1425,7 +1422,7 @@ export let CONFIG = {};
         [jobId]
       );
 
-      // 1) 讀取 S3 原始檔案並轉檔
+      // 1) Read the original file from S3 and transcode it
       const s3Object = await s3.send(
         new GetObjectCommand({ Bucket: BUCKET, Key: job.stored_path })
       );
@@ -1461,7 +1458,7 @@ export let CONFIG = {};
           .save(outPath);
       });
 
-      // 2) 上傳轉檔結果到 S3
+      // 2) upload to S3
       await s3.send(
         new PutObjectCommand({
           Bucket: BUCKET,
@@ -1471,7 +1468,7 @@ export let CONFIG = {};
         })
       );
 
-      // 3) 產生縮圖
+      // 3) thumbnail
       fs.mkdirSync(THUMB_DIR, { recursive: true });
       await new Promise((resolve, reject) => {
         ffmpeg(outPath)
@@ -1488,7 +1485,7 @@ export let CONFIG = {};
           .save(thumbPath);
       });
 
-      // 4) 上傳縮圖到 S3
+      // 4) upload thumbnail to S3
       await s3.send(
         new PutObjectCommand({
           Bucket: BUCKET,
@@ -1498,7 +1495,8 @@ export let CONFIG = {};
         })
       );
 
-      // 5) 清理本地檔案
+      // 5) Clean up local temporary files
+
       if (!KEEP_LOCAL_CACHE) {
         try {
           fs.unlinkSync(outPath);
@@ -1510,7 +1508,7 @@ export let CONFIG = {};
         console.log("[CACHE] kept local files on", OUT_DIR);
       }
 
-      // 6) 更新任務完成
+      // 6) Update DB
       await dbConn.query(
         `UPDATE jobs SET status='completed', progress=100,
        output_path=$1, output_name=$2, thumbnail_path=$3, thumbnail_name=$4,
@@ -1527,7 +1525,6 @@ export let CONFIG = {};
         [jobId]
       );
 
-      // 退款（幂等）
       try {
         await dbConn.query("BEGIN");
         const r = await dbConn.query(
@@ -1551,7 +1548,6 @@ export let CONFIG = {};
         console.error("refund error:", e2);
       }
 
-      // 清理失敗檔案
       try {
         if (fs.existsSync(outPath)) fs.unlinkSync(outPath);
       } catch {}
@@ -1572,13 +1568,13 @@ export let CONFIG = {};
     res.json({ items });
   });
 
-  // file_id TEXT, -- 注意：不再 NOT NULL
+ 
   const schema = process.env.PGSCHEMA || "public";
   async function ensureTables() {
-    // 指定 schema========================change to the schema name
+    // change to the schema name
     await run(`SET search_path TO "${schema}";`);
 
-    // 建立表格
+    // create table
     await run(`
     CREATE TABLE IF NOT EXISTS accounts (
       owner TEXT PRIMARY KEY,
