@@ -65,7 +65,7 @@ Overview
 
 ### In-memory cache
 
-- **ElastiCache instance name:**
+- **ElastiCache instance name:** n11145862a2
 - **What data is being cached?:** Frequently queried RDS metadata and job status results
 - **Why is this data likely to be accessed frequently?:** Users repeatedly check video processing status and metadata, so caching reduces database load.
 - **Video timestamp:**
@@ -76,7 +76,9 @@ Overview
 
 - **What data is stored within your application that is not stored in cloud data services?:** Only temporary processing state in memory (ffmpeg processes, intermediate tmp files).
 - **Why is this data not considered persistent state?:** These can be recreated from S3 source if lost.
-- **How does your application ensure data consistency if the app suddenly stops?:** Persistent data (uploads, metadata, outputs) are always written to S3, RDS, and EFS. Restarting with a fresh instance does not lose any data.
+- **How does your application ensure data consistency if the app suddenly stops?:** Persistent data (uploads, metadata, outputs) are always written to S3, RDS, and EFS. Restarting with a fresh instance does not lose any data. 
+In addition, The client can resume operations using dedicated endpoint: 
+• /resume/:jobId  allows users to resume transcoding jobs by reprocessing from metadata stored in RDS and source files in S3.
 - **Relevant files:**
     - index.js
 
@@ -121,7 +123,7 @@ Overview
 
 ### Core - DNS with Route53
 
-- **Subdomain**:  [eg. myawesomeapp.cab432.com]
+- **Subdomain**:  n11145862.a2.cab432.com
 - **Video timestamp:**
 
 ### Parameter store
