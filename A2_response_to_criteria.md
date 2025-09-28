@@ -25,7 +25,7 @@ Overview
 ### Core - First data persistence service
 
 - **AWS service name:** Amazon S3
-- **What data is being stored?:** Video files (uploads and final transcoded outputs)
+- **What data is being stored?:** Video files (original uploaded file and final transcoded outputs)
 - **Why is this service suited to this data?:** S3 is designed for storing large binary files with durability and scalability, ideal for video storage and distribution.
 - **Why is are the other services used not suitable for this data?:** RDS and DynamoDB are optimised for structured data, not large media objects. EFS is good for temporary working files, not long-term storage and public distribution.
 - **Bucket/instance/table name:** n11145862-test
@@ -75,10 +75,10 @@ Overview
 ### Core - Statelessness
 
 - **What data is stored within your application that is not stored in cloud data services?:** Only temporary processing state in memory (ffmpeg processes, intermediate tmp files).
-- **Why is this data not considered persistent state?:** These can be recreated from S3 source if lost.
-- **How does your application ensure data consistency if the app suddenly stops?:** Persistent data (uploads, metadata, outputs) are always written to S3, RDS, and EFS. Restarting with a fresh instance does not lose any data. 
-In addition, The client can resume operations using dedicated endpoint: 
-• /resume/:jobId  allows users to resume transcoding jobs by reprocessing from metadata stored in RDS and source files in S3.
+- **Why is this data not considered persistent state?:** All temporary files can be recreated from S3 source if lost.
+- **How does your application ensure data consistency if the app suddenly stops?:** Persistent data, including uploads, metadata, and final outputs, are always stored in S3, RDS, and optionally EFS. Temporary files required during processing are stored in EFS until the task completes; after uploading outputs to cloud storage, EFS is cleared. On application restart, any remaining temporary files in EFS or local directories are removed to ensure a clean state.
+
+Users can resume incomplete jobs via the dedicated endpoint /resume/:jobId, which reprocesses tasks using metadata from RDS and source files from S3.
 - **Relevant files:**
     - index.js
 
@@ -124,12 +124,12 @@ In addition, The client can resume operations using dedicated endpoint:
 ### Core - DNS with Route53
 
 - **Subdomain**:  n11145862.a2.cab432.com
-- **Video timestamp:**
+- **Video timestamp:** 7.12
 
 ### Parameter store
 
 - **Parameter names:** /n11145862/assessment2_parameter
-- **Video timestamp:** 7.12
+- **Video timestamp:** 7.18
 - **Relevant files:**
     - index.js
     - .env
@@ -137,7 +137,7 @@ In addition, The client can resume operations using dedicated endpoint:
 ### Secrets manager
 
 - **Secrets names:** n11145862-a2
-- **Video timestamp:** 7.12
+- **Video timestamp:** 7.42
 - **Relevant files:**
     - index.js
     - .env

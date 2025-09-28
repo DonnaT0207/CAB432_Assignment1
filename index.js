@@ -26,9 +26,9 @@ import {
   ConfirmSignUpCommand,
   InitiateAuthCommand,
   AssociateSoftwareTokenCommand,
-  VerifySoftwareTokenCommand, 
-  SetUserMFAPreferenceCommand, 
-  RespondToAuthChallengeCommand, 
+  VerifySoftwareTokenCommand,
+  SetUserMFAPreferenceCommand,
+  RespondToAuthChallengeCommand,
 } from "@aws-sdk/client-cognito-identity-provider";
 import { CognitoJwtVerifier } from "aws-jwt-verify";
 import crypto from "crypto";
@@ -163,7 +163,7 @@ export let CONFIG = {};
   );
   const UP_DIR = path.join(DATA_DIR, "uploads");
   const OUT_DIR = path.join(DATA_DIR, "outputs");
-  const THUMB_DIR = path.join(OUT_DIR, "thumbs");
+  const THUMB_DIR = path.join(DATA_DIR, "thumbs"); ///<---
   for (const d of [UP_DIR, OUT_DIR, THUMB_DIR])
     fs.mkdirSync(d, { recursive: true });
 
@@ -171,6 +171,24 @@ export let CONFIG = {};
   fs.mkdirSync(TMP_DIR, { recursive: true });
 
   process.env.TMPDIR = TMP_DIR;
+
+  const DATA_DIRS = ["./data/uploads", "./data/outputs", "./data/thumbs", "./data/tmp"];
+  // Clean all the local storage before start.
+  function cleanDataDirs() {
+    for (const dir of DATA_DIRS) {
+      if (fs.existsSync(dir)) {
+        for (const f of fs.readdirSync(dir)) {
+          const filePath = path.join(dir, f);
+          try {
+            fs.rmSync(filePath, { recursive: true, force: true });
+          } catch (e) {
+            console.error("failed to delete", filePath, e);
+          }
+        }
+      }
+    }
+    console.log("[CLEAN] data dirs cleared");
+  }
 
   // ---- admin allowlist from env ----
   const ADM_USERNAMES = (CONFIG.ADMIN_USERNAMES || "")
@@ -404,7 +422,6 @@ export let CONFIG = {};
       const sh = makeSecretHash(username);
       if (sh) authParams.SECRET_HASH = sh;
 
-     
       const out = await cogClient.send(
         new InitiateAuthCommand({
           AuthFlow: "USER_PASSWORD_AUTH",
@@ -633,7 +650,7 @@ export let CONFIG = {};
 
       // only update cache if run in EC2
       if (process.env.IS_EC2 === "true" && memcached) {
-        // refresh page 1 in the file list 
+        // refresh page 1 in the file list
         const page = 1,
           size = 10,
           sort = "uploaded_at",
@@ -700,7 +717,7 @@ export let CONFIG = {};
       defaultSort: "uploaded_at",
     });
 
-    // Cache key 
+    // Cache key
     const cacheKey = `files:${req.user.sub}:${page}:${size}:${
       q || ""
     }:${sort}:${order}`;
@@ -739,7 +756,6 @@ export let CONFIG = {};
       );
 
       const result = { items: rows, total, page, size, sort, order, q };
-
 
       if (memcached) {
         await memcached.aSet(cacheKey, result, 10);
@@ -1148,7 +1164,7 @@ export let CONFIG = {};
     // Dedicated DB connection for a single task (prevents connection explosion)
     const dbConn = await pool.connect();
 
-  // Output file path (may be cleaned up if the task fails)
+    // Output file path (may be cleaned up if the task fails)
     const outId = uuidv4();
     const outName = `${outId}-${path.basename(
       f.filename,
@@ -1347,6 +1363,21 @@ export let CONFIG = {};
   app.post("/resume/:jobId", auth, async (req, res) => {
     const jobId = req.params.jobId;
     const owner = req.user.sub;
+
+    try {
+      const files = fs.readdirSync(OUT_DIR);
+      for (const f of files) {
+        const filePath = path.join(OUT_DIR, f);
+        try {
+          fs.unlinkSync(filePath);
+        } catch (err) {
+          console.warn("Failed to remove local file:", filePath, err.message);
+        }
+      }
+      console.log("[CLEANUP] Cleared local outputs before resume");
+    } catch (err) {
+      console.error("Failed to scan outputs directory:", err);
+    }
 
     const job = await one(
       `SELECT j.*, f.filename, f.stored_path FROM jobs j
@@ -1568,7 +1599,6 @@ export let CONFIG = {};
     res.json({ items });
   });
 
- 
   const schema = process.env.PGSCHEMA || "public";
   async function ensureTables() {
     // change to the schema name
@@ -1616,7 +1646,7 @@ export let CONFIG = {};
 
   // ----- start -----
   const HOST = process.env.IS_EC2 === "true" ? "0.0.0.0" : "localhost";
-
+  cleanDataDirs();
   app.listen(PORT, HOST, async () => {
     const displayHost =
       HOST === "0.0.0.0"
