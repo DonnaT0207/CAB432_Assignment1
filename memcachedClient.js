@@ -1,6 +1,6 @@
 import Memcached from "memcached";
 import util from "node:util";
-import { CONFIG } from "./index.js";
+import 'dotenv/config';
 
 
 export function createMemcachedClient() {
@@ -11,7 +11,7 @@ export function createMemcachedClient() {
 
   console.log("Running on EC2 → connecting to ElastiCache Memcached.");
   // const memcached = new Memcached(memcachedAddress);
-  const memcached = new Memcached(CONFIG.AWS_CACHE_ENDPOINT);
+  const memcached = new Memcached(process.env.AWS_CACHE_ENDPOINT);
 
   memcached.aGet = util.promisify(memcached.get);
   memcached.aSet = util.promisify(memcached.set);
